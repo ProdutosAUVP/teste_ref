@@ -30,6 +30,8 @@ import { filterItems, selectionKey, type Selection } from "@/lib/view";
 import { cx, isProbablyUrl } from "@/lib/utils";
 import { isTypingTarget, useDebounced } from "@/lib/hooks";
 import { initSync, syncNow } from "@/lib/sync";
+import { initVault } from "@/lib/vault";
+import { requestPersistentStorage } from "@/lib/idb";
 import { Sidebar } from "./Sidebar";
 import { CaptureBar } from "./CaptureBar";
 import { Toolbar } from "./Toolbar";
@@ -69,9 +71,15 @@ export function AppShell() {
   const dragDepth = useRef(0);
 
   useEffect(() => {
-    // O acervo local abre primeiro; a sincronização entra por cima depois,
-    // pra tela nunca esperar a rede pra pintar.
-    void loadStore().then(() => initSync());
+    // O acervo local abre primeiro; a pasta em disco e a sincronização entram
+    // por cima depois, pra tela nunca esperar disco nem rede pra pintar.
+    void loadStore().then(() => {
+      initSync();
+      void initVault();
+    });
+    // Enquanto o acervo depender do navegador, que ele ao menos não seja
+    // descartado sozinho quando o disco apertar.
+    void requestPersistentStorage();
   }, []);
 
   useEffect(() => {

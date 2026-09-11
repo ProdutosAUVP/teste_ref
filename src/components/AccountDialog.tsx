@@ -309,7 +309,7 @@ function describe(status: ReturnType<typeof useSyncState>["status"], pending: nu
       };
     case "unconfigured":
       return {
-        label: "Só neste navegador",
+        label: "Sem sincronização",
         dot: "bg-[var(--text-faint)]",
         title: "Sincronização não configurada nesta instalação",
       };

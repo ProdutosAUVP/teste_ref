@@ -6,6 +6,7 @@ import type { Selection } from "@/lib/view";
 import { selectionKey } from "@/lib/view";
 import { cx } from "@/lib/utils";
 import { SyncButton } from "./AccountDialog";
+import { VaultRow } from "./VaultRow";
 import {
   BoardIcon,
   ClockIcon,
@@ -214,6 +215,7 @@ export function Sidebar({
         </nav>
 
         <div className="border-t border-[var(--border)] px-2.5 pt-1.5">
+          <VaultRow />
           <SyncButton onClick={onOpenAccount} />
         </div>
 

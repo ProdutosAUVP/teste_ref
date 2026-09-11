@@ -277,6 +277,17 @@
   .state-row:hover { background: var(--surface-hover); color: var(--text); }
   .dot { width: 6px; height: 6px; border-radius: 999px; flex: none; background: var(--good); }
 
+  .vault-state {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  .vault-state[data-tone="warn"] { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .vault-state[data-tone="bad"] { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .vault-state .dot { margin-top: 6px; }
+  .vault-state b { display: block; font-size: 13px; font-weight: 600; }
+  .vault-state span:not(.dot) { display: block; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
   /* ── área principal ─────────────────────────────────────────────── */
 
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -899,7 +910,7 @@
 
   .section h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
   .section p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
-  .section .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   .fine { font-size: 11px; color: var(--text-faint); margin-top: 8px; line-height: 1.6; }
 
   .shortcut-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
@@ -1016,9 +1027,9 @@
     <nav class="rail-nav" id="rail-nav"></nav>
 
     <div class="rail-foot">
-      <button class="state-row" id="about-btn">
-        <span class="dot" style="background: var(--good)"></span>
-        <span style="flex:1;min-width:0">Salvo neste navegador</span>
+      <button class="state-row" id="storage-btn" title="Onde o acervo é salvo">
+        <span class="dot" style="background: var(--warn)"></span>
+        <span class="state-label" style="flex:1;min-width:0">Só neste navegador</span>
       </button>
       <div class="foot-row">
         <button class="foot-btn" id="theme-btn" aria-label="Alternar tema" title="Alternar tema (T)"></button>
@@ -1152,6 +1163,7 @@
     lista: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/>',
     moon: '<path d="M20 14.2A8.2 8.2 0 0 1 9.8 4 8.2 8.2 0 1 0 20 14.2"/>',
+    folder: '<path d="M3.5 7.2c0-1 .8-1.7 1.7-1.7h3.6c.5 0 1 .2 1.3.6l1.2 1.4h7.5c1 0 1.7.8 1.7 1.7v8.6c0 1-.8 1.7-1.7 1.7H5.2c-1 0-1.7-.8-1.7-1.7z"/>',
   };
 
   const uid = () =>
@@ -1460,30 +1472,43 @@
     const db = await openDB();
     return wrap(db.transaction(store, "readonly").objectStore(store).getAll());
   }
-  async function dbPut(store, value, key) {
+  async function dbGet(store, key) {
+    const db = await openDB();
+    return wrap(db.transaction(store, "readonly").objectStore(store).get(key));
+  }
+
+  async function rawPut(store, value, key) {
     const db = await openDB();
     const os = db.transaction(store, "readwrite").objectStore(store);
     return wrap(key === undefined ? os.put(value) : os.put(value, key));
   }
-  async function dbPutMany(store, values) {
+  async function rawPutMany(store, values) {
     if (!values.length) return;
     const db = await openDB();
     const tx = db.transaction(store, "readwrite");
     values.forEach((v) => tx.objectStore(store).put(v));
     return new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
   }
-  async function dbDelete(store, key) {
+  async function rawDelete(store, key) {
     const db = await openDB();
     return wrap(db.transaction(store, "readwrite").objectStore(store).delete(key));
   }
-  async function dbClear(store) {
+  async function rawClear(store) {
     const db = await openDB();
     return wrap(db.transaction(store, "readwrite").objectStore(store).clear());
   }
-  async function dbGet(store, key) {
-    const db = await openDB();
-    return wrap(db.transaction(store, "readonly").objectStore(store).get(key));
-  }
+
+  /**
+   * O banco do navegador é a escrita imediata; a pasta do acervo é a que
+   * sobrevive a ele. Agendar a gravação aqui, e não em cada ação, é o que
+   * garante que nada escape do disco — inclusive o que for adicionado depois.
+   */
+  const tapVault = (result) => { scheduleVaultSave(); return result; };
+
+  const dbPut = (store, value, key) => rawPut(store, value, key).then(tapVault);
+  const dbPutMany = (store, values) => rawPutMany(store, values).then(tapVault);
+  const dbDelete = (store, key) => rawDelete(store, key).then(tapVault);
+  const dbClear = (store) => rawClear(store).then(tapVault);
 
   /* ═════════════════════════ estado global ════════════════════════ */
 
@@ -1607,6 +1632,550 @@
 
   const sortBoards = () =>
     state.boards.sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+
+  /* ═══════════════════════ pasta do acervo ════════════════════════ */
+
+  /**
+   * O acervo espelhado numa pasta de verdade do computador, escrita pelo
+   * próprio navegador (File System Access API):
+   *
+   *   A pasta que você escolher/
+   *   ├─ acervo.json          boards, referências e preferências
+   *   └─ imagens/<id>.webp    uma imagem por referência
+   *
+   * Não é export nem backup: a pasta é regravada sozinha a cada alteração e
+   * relida na abertura seguinte. É o que faz o acervo sobreviver a limpar os
+   * dados do navegador, trocar de perfil ou formatar a máquina — o IndexedDB
+   * vira só o cache rápido de algo que já está em disco.
+   */
+
+  const VAULT_KEY = "vault";
+  const VAULT_FILE = "acervo.json";
+  const VAULT_IMAGES = "imagens";
+  const VAULT_FORMAT = "referencias/acervo";
+
+  const vault = {
+    dir: null,
+    name: "",
+    /** off | saving | ready | permission | error | unsupported */
+    status: typeof window.showDirectoryPicker === "function" ? "off" : "unsupported",
+    /** Carimbo da última gravação nossa — desempata quem escreveu por último. */
+    stamp: "",
+    savedAt: 0,
+    error: "",
+    persisted: false,
+  };
+
+  const vaultSupported = () => vault.status !== "unsupported";
+  const vaultOn = () => Boolean(vault.dir);
+
+  /* ── permissão ───────────────────────────────────────────────────── */
+
+  async function ensureVaultAccess(interactive = false) {
+    if (!vault.dir) return false;
+    if (typeof vault.dir.queryPermission !== "function") return true;
+    const options = { mode: "readwrite" };
+    if ((await vault.dir.queryPermission(options)) === "granted") return true;
+    // Pedir de novo só funciona dentro de um clique; fora dele o navegador
+    // recusa sem nem mostrar o aviso.
+    if (interactive && (await vault.dir.requestPermission(options)) === "granted") return true;
+    setVaultStatus("permission");
+    return false;
+  }
+
+  /* ── leitura ─────────────────────────────────────────────────────── */
+
+  async function readVaultSnapshot() {
+    const handle = await vault.dir.getFileHandle(VAULT_FILE).catch(() => null);
+    if (!handle) return null;
+    const file = await handle.getFile();
+    if (!file.size) return null;
+
+    let parsed;
+    try { parsed = JSON.parse(await file.text()); }
+    catch { throw new Error("O acervo.json dessa pasta está ilegível"); }
+
+    const known = parsed && (parsed.format === VAULT_FORMAT || parsed.format === "referencias/backup");
+    if (!known || !Array.isArray(parsed.items)) {
+      throw new Error("Essa pasta já tem um acervo.json que não é de Referências");
+    }
+    return parsed;
+  }
+
+  async function readVaultImage(path) {
+    try {
+      const parts = String(path).split("/").filter(Boolean);
+      let dir = vault.dir;
+      while (parts.length > 1) dir = await dir.getDirectoryHandle(parts.shift());
+      return await (await dir.getFileHandle(parts[0])).getFile();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Traz da pasta o que está lá e não está aqui. Em cada id vence quem tem o
+   * `updatedAt` mais novo, então trazer de volta nunca desfaz uma edição
+   * recente deste navegador.
+   */
+  async function mergeFromVault({ force = false, settings = false } = {}) {
+    const snapshot = await readVaultSnapshot();
+    if (!snapshot) return 0;
+
+    // Se o arquivo ainda tem o carimbo da nossa última gravação, este
+    // navegador já é a versão mais nova: não há o que trazer.
+    if (!force && snapshot.savedAt && snapshot.savedAt === vault.stamp) return 0;
+
+    const boardMap = new Map(state.boards.map((board) => [board.id, board]));
+    const boardsIn = [];
+    for (const board of snapshot.boards || []) {
+      if (!board || !board.id) continue;
+      const current = boardMap.get(board.id);
+      if (current && (current.updatedAt || 0) > (board.updatedAt || 0)) continue;
+      boardMap.set(board.id, board);
+      boardsIn.push(board);
+    }
+
+    const itemMap = new Map(state.items.map((item) => [item.id, item]));
+    const itemsIn = [];
+    for (const raw of snapshot.items) {
+      if (!raw || !raw.id) continue;
+      const current = itemMap.get(raw.id);
+      if (current && (current.updatedAt || 0) > (raw.updatedAt || 0)) continue;
+
+      const { image, imageData, ...rest } = raw;
+      const item = Object.assign({}, rest, {
+        tags: Array.isArray(rest.tags) ? rest.tags : [],
+        boardIds: Array.isArray(rest.boardIds) ? rest.boardIds : [],
+        favorite: Boolean(rest.favorite),
+      });
+
+      const blob = image ? await readVaultImage(image)
+        : imageData ? await (await fetch(imageData)).blob() : null;
+      if (blob) item.imageBlob = blob;
+      else if (current && current.imageBlob) item.imageBlob = current.imageBlob;
+
+      releaseCover(item.id);
+      itemMap.set(item.id, item);
+      itemsIn.push(item);
+    }
+
+    if (!itemsIn.length && !boardsIn.length) return 0;
+
+    state.items = [...itemMap.values()];
+    state.boards = [...boardMap.values()];
+    if (itemsIn.length) await dropSeedLeftovers(snapshot);
+    sortBoards();
+
+    await rawPutMany(S_BOARDS, boardsIn);
+    await rawPutMany(S_ITEMS, itemsIn);
+
+    if (settings && snapshot.settings) {
+      state.view = snapshot.settings.view || state.view;
+      state.sort = snapshot.settings.sort || state.sort;
+      state.theme = snapshot.settings.theme || state.theme;
+      applyTheme();
+    }
+
+    return itemsIn.length;
+  }
+
+  /**
+   * O acervo de exemplo existe só pra página não abrir vazia. Quando a pasta
+   * devolve um acervo de verdade — o caso de quem perdeu o navegador e está
+   * recuperando — ele sai de cena em vez de se misturar ao que é seu. Só sai o
+   * que nunca foi tocado: exemplo editado ou organizado é conteúdo seu.
+   */
+  async function dropSeedLeftovers(snapshot) {
+    const inVault = new Set((snapshot.items || []).map((item) => item && item.id));
+    const stale = state.items.filter((item) =>
+      String(item.id).startsWith("seed-") && !inVault.has(item.id) && item.createdAt === item.updatedAt);
+    if (!stale.length) return;
+
+    const ids = new Set(stale.map((item) => item.id));
+    state.items = state.items.filter((item) => !ids.has(item.id));
+    stale.forEach((item) => releaseCover(item.id));
+    for (const id of ids) await rawDelete(S_ITEMS, id);
+
+    const vaultBoards = new Set((snapshot.boards || []).map((board) => board && board.id));
+    const emptyBoards = state.boards.filter((board) =>
+      String(board.id).startsWith("seed-board-") && !vaultBoards.has(board.id) &&
+      !state.items.some((item) => item.boardIds.includes(board.id)));
+    if (!emptyBoards.length) return;
+
+    const boardIds = new Set(emptyBoards.map((board) => board.id));
+    state.boards = state.boards.filter((board) => !boardIds.has(board.id));
+    for (const id of boardIds) await rawDelete(S_BOARDS, id);
+    if (state.selection.type === "board" && boardIds.has(state.selection.id)) {
+      state.selection = { type: "todos" };
+    }
+  }
+
+  /* ── gravação ────────────────────────────────────────────────────── */
+
+  let vaultTimer = null;
+  let vaultWriting = false;
+  let vaultDirty = false;
+  /** Falhas seguidas — pasta removida, disco cheio, permissão revogada. */
+  let vaultFailures = 0;
+
+  /**
+   * Chamada por toda escrita no banco local. O atraso junta a rajada de
+   * alterações de uma ação só (colar 20 links) numa gravação só.
+   */
+  function scheduleVaultSave(delay = 900) {
+    if (!vaultOn()) return;
+    vaultDirty = true;
+    clearTimeout(vaultTimer);
+    vaultTimer = setTimeout(() => { void writeVault(); }, delay);
+  }
+
+  async function writeVault() {
+    if (!vaultOn() || vaultWriting) return;
+    clearTimeout(vaultTimer);
+    vaultWriting = true;
+    vaultDirty = false;
+    setVaultStatus("saving");
+
+    try {
+      if (!(await ensureVaultAccess())) return;
+
+      const imagesDir = await vault.dir.getDirectoryHandle(VAULT_IMAGES, { create: true });
+      const onDisk = new Set();
+      for await (const entry of imagesDir.values()) {
+        if (entry.kind === "file") onDisk.add(entry.name);
+      }
+
+      const keep = new Set();
+      const rows = [];
+      for (const item of state.items) {
+        const { imageBlob, ...rest } = item;
+        if (!imageBlob) { rows.push(rest); continue; }
+        const name = vaultImageName(item);
+        keep.add(name);
+        // O nome vem do id e a imagem de uma referência não muda: se o arquivo
+        // já está lá, reescrever seria só gasto de disco.
+        if (!onDisk.has(name)) await writeVaultFile(imagesDir, name, imageBlob);
+        rows.push(Object.assign({}, rest, { image: VAULT_IMAGES + "/" + name }));
+      }
+
+      for (const name of onDisk) {
+        if (!keep.has(name)) await imagesDir.removeEntry(name).catch(() => {});
+      }
+
+      const stamp = new Date().toISOString();
+      await writeVaultFile(vault.dir, VAULT_FILE, JSON.stringify({
+        format: VAULT_FORMAT,
+        version: 1,
+        savedAt: stamp,
+        settings: { view: state.view, sort: state.sort, theme: state.theme },
+        boards: state.boards,
+        items: rows,
+      }, null, 2));
+
+      vault.stamp = stamp;
+      vault.savedAt = Date.now();
+      vault.error = "";
+      vaultFailures = 0;
+      await rememberVault();
+      setVaultStatus("ready");
+    } catch (error) {
+      console.error("Falha ao gravar a pasta do acervo", error);
+      vault.error = (error && error.message) || String(error);
+      vaultFailures += 1;
+      // O que falhou continua só no navegador: tenta de novo sozinho, mas
+      // desiste depois de algumas vezes em vez de insistir pra sempre.
+      if (vaultFailures <= 3) vaultDirty = true;
+      setVaultStatus("error");
+    } finally {
+      vaultWriting = false;
+      if (vaultDirty) scheduleVaultSave(vaultFailures > 0 ? vaultFailures * 5000 : 400);
+    }
+  }
+
+  function vaultImageName(item) {
+    const type = (item.imageBlob && item.imageBlob.type) || "";
+    const ext = type === "image/png" ? ".png" : type === "image/jpeg" ? ".jpg"
+      : type === "image/gif" ? ".gif" : type === "image/svg+xml" ? ".svg" : ".webp";
+    return item.id + ext;
+  }
+
+  /**
+   * `createWritable` grava num arquivo temporário e só troca pelo original no
+   * `close`: um travamento no meio da gravação não deixa acervo.json pela
+   * metade — ou é a versão nova inteira, ou continua a anterior.
+   */
+  async function writeVaultFile(dir, name, data) {
+    const handle = await dir.getFileHandle(name, { create: true });
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(data);
+    } catch (error) {
+      await writable.abort().catch(() => {});
+      throw error;
+    }
+    await writable.close();
+  }
+
+  async function rememberVault() {
+    try { await rawPut(S_PREFS, { dir: vault.dir, stamp: vault.stamp }, VAULT_KEY); }
+    catch (error) { console.warn("Não consegui lembrar a pasta escolhida", error); }
+  }
+
+  /* ── ligar, religar, desligar ────────────────────────────────────── */
+
+  async function pickVault() {
+    if (!vaultSupported()) return;
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker({ id: "referencias-acervo", mode: "readwrite", startIn: "documents" });
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      toast("Não consegui abrir o seletor de pastas", { tone: "error" });
+      return;
+    }
+    await useVaultDir(dir);
+  }
+
+  async function useVaultDir(dir) {
+    const previous = { dir: vault.dir, name: vault.name, stamp: vault.stamp };
+    vault.dir = dir;
+    vault.name = dir.name || "acervo";
+    vault.stamp = "";
+    vault.error = "";
+    setVaultStatus("saving");
+
+    let restored = 0;
+    try {
+      if (!(await ensureVaultAccess(true))) return;
+      restored = await mergeFromVault({ force: true, settings: !state.items.length });
+    } catch (error) {
+      // Pasta com um acervo.json que não sabemos ler: sair sem tocar em nada é
+      // melhor do que sobrescrever o arquivo de outra pessoa.
+      Object.assign(vault, previous);
+      setVaultStatus(vault.dir ? "ready" : "off");
+      toast((error && error.message) || "Não consegui ler essa pasta", { tone: "error" });
+      return;
+    }
+
+    await rememberVault();
+    await writeVault();
+    if (restored) { renderRail(); renderHead(); renderGrid(); }
+    toast(restored
+      ? `${restored} ${restored === 1 ? "referência recuperada" : "referências recuperadas"} da pasta`
+      : `Acervo salvo em ${vault.name}/ a cada alteração`, { tone: "success" });
+  }
+
+  async function reconnectVault() {
+    if (!vaultOn()) return pickVault();
+    if (!(await ensureVaultAccess(true))) {
+      toast("Sem permissão, a pasta segue desconectada", { tone: "error" });
+      return;
+    }
+    try {
+      const restored = await mergeFromVault({ force: true });
+      if (restored) { renderRail(); renderHead(); renderGrid(); }
+    } catch (error) {
+      toast((error && error.message) || "Não consegui ler a pasta", { tone: "error" });
+      return;
+    }
+    await writeVault();
+    toast(`Salvando em ${vault.name}/ de novo`, { tone: "success" });
+  }
+
+  async function forgetVault() {
+    vault.dir = null;
+    vault.name = "";
+    vault.stamp = "";
+    vault.error = "";
+    setVaultStatus("off");
+    try { await rawDelete(S_PREFS, VAULT_KEY); } catch (error) { /* nada a fazer */ }
+    toast("Parei de salvar na pasta — o que já está lá continua lá");
+  }
+
+  /** Retoma a pasta da sessão anterior. Roda no arranque, antes do primeiro render. */
+  async function restoreVault({ settings } = {}) {
+    if (!vaultSupported()) return;
+
+    let record = null;
+    try { record = await dbGet(S_PREFS, VAULT_KEY); } catch (error) { /* banco indisponível */ }
+    if (!record || !record.dir) return;
+
+    vault.dir = record.dir;
+    vault.name = record.dir.name || "acervo";
+    vault.stamp = record.stamp || "";
+
+    if (!(await ensureVaultAccess())) {
+      // O Chrome esquece a permissão a cada reabertura, a não ser que você
+      // marque "permitir sempre". Um clique resolve — e até lá nada é gravado.
+      toast("Reconecte a pasta do acervo pra voltar a salvar em disco", {
+        action: { label: "Reconectar", run: () => { void reconnectVault(); } },
+      });
+      return;
+    }
+
+    try {
+      await mergeFromVault({ settings });
+      setVaultStatus("ready");
+    } catch (error) {
+      console.error("Falha ao ler a pasta do acervo", error);
+      vault.error = (error && error.message) || String(error);
+      setVaultStatus("error");
+      return;
+    }
+    scheduleVaultSave(600);
+  }
+
+  /* ── armazenamento persistente ───────────────────────────────────── */
+
+  /**
+   * Pede ao navegador pra não descartar o banco local quando o disco apertar.
+   * É a segunda linha de defesa: ajuda, mas não substitui a pasta — limpar os
+   * dados do site continua apagando tudo que só existe aqui.
+   */
+  async function requestPersistence() {
+    try {
+      if (!navigator.storage || !navigator.storage.persist) return false;
+      vault.persisted = await navigator.storage.persisted();
+      if (!vault.persisted) vault.persisted = await navigator.storage.persist();
+      return vault.persisted;
+    } catch {
+      return false;
+    }
+  }
+
+  /* ── estado na barra lateral ─────────────────────────────────────── */
+
+  const VAULT_DOT = {
+    ready: "var(--good)", saving: "var(--good)", off: "var(--warn)",
+    unsupported: "var(--warn)", permission: "var(--warn)", error: "var(--bad)",
+  };
+
+  function setVaultStatus(status) {
+    vault.status = status;
+    renderStorage();
+  }
+
+  function renderStorage() {
+    const row = $("storage-btn");
+    if (!row) return;
+    const label =
+      vault.status === "ready" ? "Salvo em " + vault.name + "/" :
+      vault.status === "saving" ? "Salvando em " + vault.name + "/…" :
+      vault.status === "permission" ? "Reconectar a pasta do acervo" :
+      vault.status === "error" ? "Falha ao salvar na pasta" :
+      "Só neste navegador";
+    row.querySelector(".state-label").textContent = label;
+    row.querySelector(".dot").style.background = VAULT_DOT[vault.status] || "var(--warn)";
+    row.title = vault.status === "ready" || vault.status === "saving"
+      ? "O acervo está sendo gravado numa pasta do computador"
+      : "Onde o acervo é salvo";
+  }
+
+  /* ── diálogo ─────────────────────────────────────────────────────── */
+
+  function openStorage() {
+    let dismiss = null;
+    const body = el("div", { style: "display:flex;flex-direction:column;gap:20px" });
+
+    const paint = () => {
+      const on = vaultOn();
+      const rows = [];
+
+      rows.push(el("div", { class: "vault-state", dataset: { tone: VAULT_TONE_NAME[vault.status] || "warn" } }, [
+        el("span", { class: "dot", style: "background:" + (VAULT_DOT[vault.status] || "var(--warn)") }),
+        el("div", { style: "flex:1;min-width:0" }, [
+          el("b", {
+            text: on
+              ? (vault.status === "permission" ? "Pasta desconectada" : vault.name + "/")
+              : "O acervo só existe neste navegador",
+          }),
+          el("span", {
+            text: on
+              ? (vault.status === "permission"
+                  ? "As alterações estão só no navegador até você reconectar."
+                  : vault.status === "error"
+                    ? "Última gravação falhou: " + vault.error
+                    : (vault.savedAt ? "Última gravação " + formatTime(vault.savedAt) + "." : "Gravando…") +
+                      " Toda alteração é gravada aqui.")
+              : "Limpar os dados do navegador, trocar de perfil ou formatar o computador apaga tudo.",
+          }),
+        ]),
+      ]));
+
+      if (vaultSupported()) {
+        rows.push(el("section", { class: "section" }, [
+          el("h3", { text: "Salvar numa pasta do computador" }),
+          el("p", { text: on
+            ? "A pasta é regravada a cada alteração, com as imagens junto. Se o navegador esquecer o acervo, é dela que ele volta."
+            : "Escolha uma pasta e o acervo passa a ser gravado nela a cada alteração — boards, referências e imagens. Não é um export: você não precisa lembrar de nada, e na próxima abertura a página lê de lá." }),
+          el("pre", { class: "snippet", text: (on ? vault.name : "Referências") + "/\n├─ acervo.json\n└─ imagens/" }),
+          el("div", { class: "row-actions" }, [
+            vault.status === "permission"
+              ? el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await reconnectVault(); } },
+                  [svg(ICON.folder, 14), "Reconectar pasta"])
+              : el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await pickVault(); } },
+                  [svg(ICON.folder, 14), on ? "Trocar de pasta" : "Escolher a pasta"]),
+            on ? el("button", { class: "btn btn-ghost", text: "Salvar agora", onclick: async () => {
+              await writeVault(); paint();
+              toast(vault.status === "ready" ? "Pasta atualizada" : "Não consegui gravar agora",
+                { tone: vault.status === "ready" ? "success" : "error" });
+            } }) : null,
+            on ? el("button", { class: "btn btn-ghost", text: "Parar de salvar", onclick: async () => { await forgetVault(); paint(); } }) : null,
+          ]),
+          el("p", { class: "fine", text: "Dica: escolha uma pasta dentro do Google Drive, OneDrive ou Dropbox e o acervo vai pra nuvem — e pro outro computador — sem mais nenhum passo." }),
+        ]));
+      } else {
+        rows.push(el("section", { class: "section" }, [
+          el("h3", { text: "Salvar numa pasta do computador" }),
+          el("p", { text: "Este navegador não deixa uma página gravar direto numa pasta (só Chrome, Edge e outros baseados em Chromium deixam). Abrindo esta mesma página no Chrome ou no Edge, o acervo passa a ser salvo em disco sozinho." }),
+          el("p", { class: "fine", text: "Na versão completa, rodando na sua máquina, o próprio servidor grava a pasta — e aí funciona em qualquer navegador." }),
+        ]));
+      }
+
+      rows.push(el("section", { class: "section" }, [
+        el("h3", { text: "Armazenamento do navegador" }),
+        el("p", { text: vault.persisted
+          ? "Este navegador marcou o acervo como persistente: ele não descarta os dados sozinho quando o disco aperta. Limpar os dados do site, ainda assim, apaga."
+          : "O navegador pode descartar o acervo sozinho se o disco encher. Dá pra pedir que ele não faça isso." }),
+        vault.persisted ? null : el("div", { class: "row-actions" }, [
+          el("button", { class: "btn btn-ghost", text: "Pedir armazenamento persistente", onclick: async () => {
+            const granted = await requestPersistence();
+            paint();
+            toast(granted ? "Armazenamento marcado como persistente"
+              : "O navegador não concedeu agora — costuma conceder depois de algum uso ou se você favoritar a página",
+              { tone: granted ? "success" : "info" });
+          } }),
+        ]),
+      ]));
+
+      body.replaceChildren(...rows);
+    };
+
+    paint();
+
+    dismiss = modal({
+      title: "Onde o acervo é salvo",
+      description: "O navegador é rápido, mas esquece. A pasta é o que não esquece.",
+      body: [body],
+      footer: [
+        el("button", { class: "btn btn-ghost", text: "Como esta página funciona", onclick: () => { dismiss(); openAbout(); } }),
+        el("button", { class: "btn btn-primary", text: "Fechar", onclick: () => dismiss() }),
+      ],
+    });
+  }
+
+  const VAULT_TONE_NAME = {
+    ready: "good", saving: "good", off: "warn",
+    unsupported: "warn", permission: "warn", error: "bad",
+  };
+
+  function formatTime(ts) {
+    const diff = Date.now() - ts;
+    if (diff < 45000) return "agora";
+    if (diff < 3600000) return "há " + Math.round(diff / 60000) + " min";
+    return "às " + new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(ts);
+  }
 
   /* ═══════════════════════ acervo de exemplo ══════════════════════ */
 
@@ -2240,7 +2809,7 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
   function emptyState() {
     const filtering = state.query.trim().length > 0;
     const sel = state.selection.type;
-    let title, body, action = null;
+    let title, body, action = null, aside = null;
 
     if (filtering) {
       title = `Nada encontrado para “${state.query.trim()}”`;
@@ -2250,6 +2819,11 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
       title = "Seu acervo começa aqui";
       body = "Cole um link ou um punhado de hexadecimais na barra de cima, escreva uma ideia ou arraste uma imagem pra dentro da janela.";
       action = { label: "Adicionar a primeira referência", run: focusCapture };
+      // Acervo vazio é também a cara de um navegador limpo. Quem já salvava
+      // numa pasta volta ao que era em um clique, daqui mesmo.
+      if (vaultSupported() && !vaultOn()) {
+        aside = { label: "Já tenho uma pasta de acervo", run: () => { void pickVault(); } };
+      }
     } else if (sel === "board") {
       title = "Board vazio por enquanto";
       body = "Salve algo com este board selecionado na barra de captura, ou abra uma referência e marque este board no painel de detalhe.";
@@ -2271,7 +2845,10 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
         html: `<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${filtering ? ICON.search : ICON.spark}</svg>` }),
       el("h2", { text: title }),
       el("p", { text: body }),
-      action ? el("button", { class: "btn btn-primary", text: action.label, onclick: action.run }) : null,
+      el("div", { class: "row-actions", style: "justify-content:center" }, [
+        action ? el("button", { class: "btn btn-primary", text: action.label, onclick: action.run }) : null,
+        aside ? el("button", { class: "btn btn-ghost", text: aside.label, onclick: aside.run }) : null,
+      ]),
     ]);
   }
 
@@ -2922,7 +3499,7 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
     const dismiss = modal({
       title: "Ajustes e backup",
-      description: "Exporte de tempos em tempos — é a sua cópia, fora de qualquer serviço.",
+      description: "Onde o acervo é salvo, a cópia em arquivo e a zona de risco.",
       body: [
         el("div", { class: "stat-strip" }, [
           el("div", { class: "stat" }, [
@@ -2942,8 +3519,20 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
         ]),
 
         el("section", { class: "section" }, [
-          el("h3", { text: "Backup" }),
-          el("p", { text: "Limpar os dados do navegador apaga o acervo, e o arquivo é o que traz tudo de volta — inclusive as imagens." }),
+          el("h3", { text: "Salvamento" }),
+          el("p", { text: vaultOn()
+            ? "O acervo está sendo gravado na pasta " + vault.name + "/ a cada alteração, com as imagens junto. Nada depende de você lembrar."
+            : "Hoje o acervo só existe neste navegador — limpar os dados dele apaga tudo. Dá pra apontar uma pasta do computador e o acervo passa a ser gravado nela sozinho." }),
+          el("div", { class: "row-actions" }, [
+            el("button", { class: vaultOn() ? "btn btn-ghost" : "btn btn-primary",
+              onclick: () => { dismiss(); openStorage(); } },
+              [svg(ICON.folder, 14), vaultOn() ? "Pasta do acervo" : "Salvar numa pasta do computador"]),
+          ]),
+        ]),
+
+        el("section", { class: "section" }, [
+          el("h3", { text: "Cópia em arquivo" }),
+          el("p", { text: "Um único .json com tudo dentro, pra guardar onde você quiser ou levar pra outra máquina — inclusive as imagens." }),
           el("div", { class: "row-actions" }, [
             exportButton, fileInput,
             el("button", { class: "btn btn-ghost", onclick: () => fileInput.click() },
@@ -2954,7 +3543,9 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
         el("section", { class: "section" }, [
           el("h3", { text: "Zona de risco" }),
-          el("p", { text: "Apaga todas as referências e boards deste navegador. Não dá pra desfazer." }),
+          el("p", { text: vaultOn()
+            ? "Apaga todas as referências e boards — e, como a pasta é um espelho do acervo, esvazia a pasta " + vault.name + "/ junto. Não dá pra desfazer."
+            : "Apaga todas as referências e boards deste navegador. Não dá pra desfazer." }),
           el("div", { class: "row-actions" }, [
             el("button", { class: "btn btn-danger", text: "Limpar acervo", onclick: async (event) => {
               if (!confirming) {
@@ -2982,7 +3573,12 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
       body: [
         el("section", { class: "section" }, [
           el("h3", { text: "Onde ficam os seus dados" }),
-          el("p", { text: "Tudo que você salvar aqui fica no IndexedDB deste navegador, incluindo as imagens. Nada é enviado para lugar nenhum — e por isso limpar os dados do navegador apaga o acervo. Use Exportar em Ajustes para guardar uma cópia." }),
+          el("p", { text: "Tudo que você salvar fica no IndexedDB deste navegador, incluindo as imagens — e nada é enviado para lugar nenhum. Só que navegador esquece: limpar os dados do site apaga o acervo." }),
+          el("p", { text: "Por isso dá pra apontar uma pasta do computador. A partir daí cada alteração é gravada nela em acervo.json (mais uma imagem por referência), e a página lê de lá quando abre. Não é um export que você precisa lembrar de fazer: é o acervo morando em disco." }),
+          el("div", { class: "row-actions" }, [
+            el("button", { class: "btn btn-ghost", onclick: () => { dismissAbout(); openStorage(); } },
+              [svg(ICON.folder, 14), "Onde o acervo é salvo"]),
+          ]),
         ]),
         el("section", { class: "section" }, [
           el("h3", { text: "Paletas de cor" }),
@@ -3414,10 +4010,13 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
   /* ═══════════════════════════ arranque ═══════════════════════════ */
 
   async function load() {
+    let opened = false;
+
     try {
       const [boards, items, prefs] = await Promise.all([
         dbAll(S_BOARDS), dbAll(S_ITEMS), dbGet(S_PREFS, "app"),
       ]);
+      opened = true;
 
       if (prefs) {
         state.view = prefs.view || state.view;
@@ -3428,19 +4027,28 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
       if (!boards.length && !items.length && !(prefs && prefs.onboarded)) {
         const seed = await buildSeed();
-        await dbPutMany(S_BOARDS, seed.boards);
-        await dbPutMany(S_ITEMS, seed.items);
-        await dbPut(S_PREFS, { view: state.view, sort: state.sort, theme: state.theme, onboarded: true }, "app");
+        await rawPutMany(S_BOARDS, seed.boards);
+        await rawPutMany(S_ITEMS, seed.items);
+        await rawPut(S_PREFS, { view: state.view, sort: state.sort, theme: state.theme, onboarded: true }, "app");
         state.boards = seed.boards;
         state.items = seed.items;
       } else {
         state.boards = boards; sortBoards();
         state.items = items;
       }
+
+      // A pasta do acervo é a cópia que sobrevive ao navegador: se ela existe,
+      // é dela que vem o que faltar aqui — inclusive tudo, se o navegador
+      // tiver sido limpo desde a última visita.
+      await restoreVault({ settings: !prefs });
     } catch (error) {
       console.error("Banco local indisponível", error);
-      toast("Não consegui abrir o banco local; esta sessão não vai salvar", { tone: "error" });
+      toast(opened ? "Algo falhou ao abrir o acervo" : "Não consegui abrir o banco local; esta sessão não vai salvar",
+        { tone: "error" });
     }
+
+    renderStorage();
+    void requestPersistence();
 
     state.ready = true;
     renderRail(); renderHead(); renderGrid();
@@ -3494,7 +4102,7 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
     $("theme-btn").addEventListener("click", toggleTheme);
     $("shortcuts-btn").addEventListener("click", openShortcuts);
     $("settings-btn").addEventListener("click", openSettings);
-    $("about-btn").addEventListener("click", openAbout);
+    $("storage-btn").addEventListener("click", openStorage);
     $("rail-open").addEventListener("click", () => { $("rail").dataset.open = "true"; });
     $("rail-close").addEventListener("click", () => { $("rail").dataset.open = "false"; });
 
@@ -3502,6 +4110,12 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keydown", onDetailKeyDown);
+
+    // Fechar a aba não pode custar os últimos segundos de trabalho: o que
+    // estiver esperando o debounce vai pro disco na hora em que ela some.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && vaultDirty) void writeVault();
+    });
 
     window.addEventListener("paste", async (event) => {
       if (isTyping(event.target) || overlayStack.length) return;

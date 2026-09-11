@@ -42,6 +42,28 @@ compartilhamento não resolvem caminho relativo: `canonical`, `og:url` e
 `og:image`. Ao publicar em outro endereço, ajuste as três — o resto da página
 não conhece o próprio domínio.
 
+## Onde o acervo é salvo
+
+O acervo vive no IndexedDB do navegador — e, se você quiser, também numa **pasta
+de verdade do computador**, gravada pela própria página (File System Access API,
+disponível em Chrome, Edge e outros Chromium):
+
+```
+A pasta que você escolher/
+├─ acervo.json
+└─ imagens/<id>.webp
+```
+
+Cada alteração é gravada nela na hora, e na abertura seguinte a página lê de
+lá. É o que faz o acervo sobreviver a limpar os dados do navegador ou a trocar
+de máquina — e é o mesmo formato do app completo, então a mesma pasta abre nos
+dois. O botão está no rodapé da barra lateral, na linha que diz onde o acervo
+está salvo. Detalhes em [salvando-o-acervo.md](salvando-o-acervo.md).
+
+Sem pasta escolhida, a página avisa em amarelo que o acervo só existe no
+navegador — e pede armazenamento persistente pra ele ao menos não ser descartado
+sozinho quando o disco apertar.
+
 ## Hospedando em outro lugar
 
 Sem Pages, o arquivo continua sendo só um arquivo:
@@ -53,6 +75,11 @@ Sem Pages, o arquivo continua sendo só um arquivo:
 | **S3, nginx, Apache** | Suba e sirva como `index.html` |
 | **Sem servidor nenhum** | Abra direto do disco: `file://` funciona, inclusive salvando |
 
+Servida por HTTP (Pages, Netlify, um `python3 -m http.server`), a página também
+grava na pasta do acervo. Aberta como `file://`, alguns navegadores restringem o
+seletor de pastas — se o botão não responder, sirva o arquivo em vez de
+abri-lo.
+
 ## O que muda em relação ao app completo
 
 Sem servidor, duas coisas ficam de fora — e a própria página explica isso em
@@ -62,6 +89,12 @@ Sem servidor, duas coisas ficam de fora — e a própria página explica isso em
   (CORS), então o título vem do próprio endereço e não há capa vinda do site.
   O card já nasce editável.
 - **Sincronização entre dispositivos**, que depende de conta e banco.
+
+Uma coisa muda de dono: **a pasta do acervo é escolhida por você no seletor do
+navegador**, em vez de configurada por `VAULT_DIR` no servidor — e por isso
+depende de um navegador Chromium, enquanto no app completo funciona em qualquer
+um. O Chrome também costuma repedir a permissão da pasta a cada reabertura; a
+página mostra um aviso com "Reconectar".
 
 Todo o resto é igual: captura de links, notas, imagens e **paletas de cor**,
 boards, tags automáticas, busca ⌘K, anotações, referências relacionadas, três

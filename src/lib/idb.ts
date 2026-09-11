@@ -70,6 +70,22 @@ export function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/**
+ * Pede ao navegador pra não descartar o banco local quando o disco apertar.
+ * É a defesa mais barata que existe contra perder o acervo — mas é só a
+ * segunda: limpar os dados do site continua apagando tudo que só vive aqui,
+ * e é pra isso que existe a pasta em disco.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 function tx(
   db: IDBDatabase,
   store: string,

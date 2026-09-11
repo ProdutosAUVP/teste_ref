@@ -5,8 +5,9 @@ encontre a referência certa na hora em que você está criando alguma coisa.
 
 Inspirado no [Eden](https://eden.so/) — boards como unidade central, captura de
 um clique, busca instantânea. Funciona sozinho no navegador, sem conta nem
-configuração; ligando uma variável de ambiente, sincroniza entre computador e
-celular.
+configuração; aponte uma pasta do computador e o acervo passa a ser gravado nela
+a cada alteração; ligando uma variável de ambiente, sincroniza entre computador
+e celular.
 
 > A regra que guiou cada decisão de produto aqui: **capturar em 3 segundos,
 > achar em 3 segundos.** Se algo levava mais que isso, virou atalho.
@@ -118,17 +119,47 @@ acervo**.
 ## Onde ficam os dados
 
 O acervo vive no **IndexedDB do seu navegador** — inclusive as imagens que você
-envia. É de lá que a tela lê, sempre: nada na interface espera a rede, e o app
-funciona igual offline.
+envia. É de lá que a tela lê, sempre: nada na interface espera disco nem rede, e
+o app funciona igual offline.
 
-Sem sincronização, esse é o único lugar onde os dados existem. Duas
-consequências práticas:
+Só que navegador esquece. Limpar os dados do site, trocar de perfil, reinstalar
+o navegador ou formatar a máquina apaga o que só vive ali. Por isso o acervo
+também pode morar numa **pasta de verdade do computador**:
 
-1. **Limpar os dados do navegador apaga o acervo.** Exporte de vez em quando em
-   **Ajustes → Exportar tudo**: sai um único `.json` com boards, referências e
-   imagens embutidas.
-2. **O import soma ao que já existe** e usa o mesmo id, então reimportar o
-   mesmo arquivo não duplica nada.
+```
+A pasta que você escolher/
+├─ acervo.json          boards, referências, tags, anotações e preferências
+└─ imagens/<id>.webp    uma imagem por referência
+```
+
+Cada alteração é gravada nessa pasta na hora — não é um export, não tem botão
+pra lembrar de apertar — e na abertura seguinte é dela que o acervo volta se o
+navegador tiver esquecido. Backup é copiar a pasta; restaurar é apontá-la de
+volta. Colocando a pasta dentro do Google Drive, do OneDrive ou do Dropbox, o
+acervo ganha nuvem e segundo computador sem mais nenhum passo.
+
+```bash
+npm run dev                    # já vem ligado, gravando em ./data
+VAULT_DIR=./acervo npm start   # em produção, escolha a pasta (e veja o aviso abaixo)
+```
+
+Na [página publicada](https://produtosauvp.github.io/teste_ref/), que não tem
+servidor, quem grava é o próprio navegador: no rodapé da barra lateral, **onde o
+acervo é salvo → Escolher a pasta** (Chrome, Edge e outros Chromium). O formato é
+o mesmo dos dois lados, então a mesma pasta abre nas duas versões.
+
+A pasta **não tem senha**: quem alcança o app alcança o acervo. Por isso ela vem
+desligada em produção — ligue com `VAULT_DIR` só onde o disco for persistente e
+o acesso já for restrito; num servidor público, use a sincronização com conta.
+
+Os detalhes — como disco e navegador se conciliam, o que acontece quando os dois
+divergem, o que a pasta **não** resolve — estão em
+[docs/salvando-o-acervo.md](docs/salvando-o-acervo.md).
+
+O backup em JSON continua existindo como cópia portátil: **Ajustes → Exportar
+tudo** gera um único `.json` com boards, referências e imagens embutidas. O
+import soma ao que já existe e usa o mesmo id, então reimportar o mesmo arquivo
+não duplica nada.
 
 A rota `/api/metadata` é o que busca o `<head>` do link colado pra montar o
 card. Ela roda no servidor porque o navegador não consegue ler HTML de outro
@@ -180,8 +211,10 @@ Cada conta enxerga só os próprios dados, inclusive as imagens. As senhas são
 guardadas com scrypt e salt por usuário, e a sessão é um cookie httpOnly de
 90 dias.
 
-O backup em JSON continua valendo, com ou sem sincronização — é a cópia que não
-depende de nenhum serviço.
+A pasta do acervo e a sincronização são independentes e podem andar juntas: a
+pasta é a cópia local que sobrevive ao navegador, a sincronização é o que faz
+dois aparelhos verem o mesmo acervo. O backup em JSON continua valendo com ou
+sem as duas — é a cópia que não depende de nenhum serviço.
 
 ---
 
@@ -196,6 +229,7 @@ src/
 │     ├─ metadata/route.ts    busca o HTML e devolve os metadados do link
 │     ├─ auth/…               register, login, logout, me
 │     ├─ sync/route.ts        push + pull na mesma transação
+│     ├─ vault/…              lê e grava a pasta do acervo em disco
 │     └─ assets/…             upload e download das imagens
 ├─ lib/
 │  ├─ types.ts                Item, Board, Settings
@@ -203,6 +237,8 @@ src/
 │  ├─ store.ts                estado reativo + persistência + backup
 │  ├─ sync.ts                 motor de sincronização do cliente
 │  ├─ syncTypes.ts            contrato compartilhado cliente ↔ servidor
+│  ├─ vault.ts                espelho do acervo na pasta em disco
+│  ├─ vaultTypes.ts           formato da pasta (cliente, servidor e standalone)
 │  ├─ capture.ts              link / imagem / nota → referência salva
 │  ├─ og.ts                   parser de Open Graph (puro, testado)
 │  ├─ autotag.ts              sugestão de tags por domínio e palavra-chave
@@ -211,6 +247,7 @@ src/
 │  ├─ hooks.ts / utils.ts
 │  └─ server/
 │     ├─ db.ts                adapter Postgres/SQLite + schema
+│     ├─ vault.ts             escrita atômica de acervo.json e das imagens
 │     ├─ auth.ts              scrypt, sessões, freio de força bruta
 │     └─ respond.ts           503 "não configurado" vs 500 "falhou"
 └─ components/                AppShell, Sidebar, CaptureBar, ItemGrid, …
@@ -243,6 +280,11 @@ npm run build && npm start
 
 Sem `DATABASE_URL`, cada navegador tem o seu acervo e o export/import é a ponte
 entre eles. Com `DATABASE_URL`, é só entrar na mesma conta em cada dispositivo.
+
+`VAULT_DIR` é a terceira opção, pra quem roda o app na própria máquina ou num
+servidor só seu: o acervo é gravado numa pasta do disco a cada alteração, sem
+conta nem banco. Em plataforma serverless ela não serve — o disco é recriado a
+cada deploy —, e num app público ela expõe o acervo a quem abrir a URL.
 
 Em plataformas serverless, use a URL do *pooler* do seu Postgres: cada instância
 do app abre até 8 conexões, e num ambiente que escala sozinho isso passa rápido
