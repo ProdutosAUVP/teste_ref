@@ -230,3 +230,9 @@ export const KeyboardIcon = (props: IconProps) => (
     <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M6.5 13.5h.01M17 13.5h.01M9.5 13.5h5" />
   </Icon>
 );
+
+export const FolderIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M3.5 7.2c0-1 .8-1.7 1.7-1.7h3.6c.5 0 1 .2 1.3.6l1.2 1.4h7.5c1 0 1.7.8 1.7 1.7v8.6c0 1-.8 1.7-1.7 1.7H5.2c-1 0-1.7-.8-1.7-1.7z" />
+  </Icon>
+);

@@ -558,6 +558,68 @@ export async function applyRemote(input: {
   await removeMany(STORE_ITEMS, removedItemIds);
 }
 
+/* ────────────────────────── ponte com a pasta do acervo ──────────────────── */
+
+/**
+ * Grava o que veio da pasta em disco. Diferente do sync, aqui o que chega
+ * **é** marcado como pendente: um acervo recuperado do disco também precisa
+ * subir pra conta, se houver uma.
+ */
+export async function applyVault(input: {
+  boards: Board[];
+  items: Item[];
+  /** Ids que existem na pasta — o que sobra de exemplo aqui pode sair. */
+  idsInVault: Set<string>;
+}): Promise<void> {
+  const boardMap = new Map(state.boards.map((board) => [board.id, board]));
+  for (const board of input.boards) boardMap.set(board.id, board);
+
+  const itemMap = new Map(state.items.map((item) => [item.id, item]));
+  for (const item of input.items) itemMap.set(item.id, item);
+
+  let items = Array.from(itemMap.values());
+  let boards = Array.from(boardMap.values());
+
+  // O acervo de exemplo existe só pra plataforma não abrir vazia. Quando o
+  // disco devolve um acervo de verdade — o caso de quem perdeu o navegador e
+  // está recuperando —, ele sai de cena em vez de se misturar. Só sai o que
+  // nunca foi tocado: exemplo editado ou organizado é conteúdo do usuário.
+  const staleItems = input.items.length
+    ? items.filter(
+        (item) =>
+          item.id.startsWith("seed-") &&
+          !input.idsInVault.has(item.id) &&
+          item.createdAt === item.updatedAt,
+      )
+    : [];
+
+  if (staleItems.length > 0) {
+    const drop = new Set(staleItems.map((item) => item.id));
+    items = items.filter((item) => !drop.has(item.id));
+
+    const emptyBoards = boards.filter(
+      (board) =>
+        board.id.startsWith("seed-board-") &&
+        !input.idsInVault.has(board.id) &&
+        !items.some((item) => item.boardIds.includes(board.id)),
+    );
+    const dropBoards = new Set(emptyBoards.map((board) => board.id));
+    boards = boards.filter((board) => !dropBoards.has(board.id));
+
+    await removeMany(STORE_ITEMS, [...drop]);
+    await removeMany(STORE_BOARDS, [...dropBoards]);
+    await markDeleted("item", [...drop]);
+    await markDeleted("board", [...dropBoards]);
+  }
+
+  setState({ boards: sortBoards(boards), items });
+
+  await putMany(STORE_BOARDS, input.boards);
+  await putMany(STORE_ITEMS, input.items);
+  await markPending("board", input.boards.map((board) => board.id));
+  await markPending("item", input.items.map((item) => item.id));
+}
+
 /** Grava um item sem enfileirar envio — usado ao anexar a imagem baixada. */
 export async function applyRemoteItem(item: Item): Promise<void> {
   setState({

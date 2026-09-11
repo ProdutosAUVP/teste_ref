@@ -6,10 +6,14 @@ import { download, formatBytes } from "@/lib/utils";
 import { Button, Modal } from "./Modal";
 import { toast } from "./Toast";
 import { DownloadIcon, UploadIcon } from "./Icons";
+import { VaultSection } from "./VaultRow";
+import { useVaultState } from "@/lib/vault";
 
 /**
- * Como tudo mora no navegador, o export é a rede de segurança: um JSON único
- * com boards, itens e imagens embutidas, que volta inteiro no import.
+ * Onde o acervo é salvo, a cópia em arquivo e a zona de risco. O export
+ * continua sendo a cópia portátil — um JSON único com boards, itens e imagens
+ * embutidas, que volta inteiro no import —, mas não é mais a única defesa:
+ * com uma pasta configurada, o acervo já mora em disco.
  */
 export function SettingsDialog({
   itemCount,
@@ -24,6 +28,7 @@ export function SettingsDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const vault = useVaultState();
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleExport() {
@@ -75,7 +80,7 @@ export function SettingsDialog({
   return (
     <Modal
       title="Ajustes e backup"
-      description="Exporte de tempos em tempos — é a sua cópia, fora de qualquer serviço."
+      description="Onde o acervo é salvo, a cópia em arquivo e a zona de risco."
       onClose={onClose}
       footer={<Button onClick={onClose}>Fechar</Button>}
     >
@@ -86,11 +91,13 @@ export function SettingsDialog({
           <Stat value={boardCount} label={boardCount === 1 ? "board" : "boards"} />
         </section>
 
+        <VaultSection />
+
         <section>
-          <h3 className="text-[13px] font-semibold">Backup</h3>
+          <h3 className="text-[13px] font-semibold">Cópia em arquivo</h3>
           <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-            Exporte de vez em quando. Limpar os dados do navegador apaga o acervo, e o
-            arquivo é o que traz tudo de volta — inclusive as imagens enviadas.
+            Um JSON único com tudo dentro — inclusive as imagens enviadas — pra guardar
+            onde você quiser ou levar pra outra máquina.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="primary" disabled={busy} onClick={() => void handleExport()}>
@@ -121,8 +128,9 @@ export function SettingsDialog({
         <section>
           <h3 className="text-[13px] font-semibold">Zona de risco</h3>
           <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-            Apaga todas as referências e boards deste navegador. Não dá pra desfazer —
-            e, com a sincronização ligada, some também dos seus outros dispositivos.
+            Apaga todas as referências e boards deste navegador. Não dá pra desfazer.
+            {vault.status !== "off" && " A pasta em disco é esvaziada junto."} Com a
+            sincronização ligada, some também dos seus outros dispositivos.
           </p>
           <div className="mt-3">
             <Button
