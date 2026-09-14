@@ -158,8 +158,14 @@ divergem, o que a pasta **não** resolve — estão em
 
 O backup em JSON continua existindo como cópia portátil: **Ajustes → Exportar
 tudo** gera um único `.json` com boards, referências e imagens embutidas. O
+import aceita esse arquivo **e também o `acervo.json` da pasta** — são a mesma
+coisa em embalagens diferentes, e o botão não faz distinção. Nos dois casos o
 import soma ao que já existe e usa o mesmo id, então reimportar o mesmo arquivo
 não duplica nada.
+
+A diferença aparece só nas imagens: no backup elas vêm embutidas, no
+`acervo.json` são arquivos vizinhos. Importando o JSON sozinho, o app avisa
+quantas capas ficaram para trás — apontar a pasta inteira traz tudo junto.
 
 A rota `/api/metadata` é o que busca o `<head>` do link colado pra montar o
 card. Ela roda no servidor porque o navegador não consegue ler HTML de outro
