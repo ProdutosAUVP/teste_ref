@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { imageFileName, imageNameOf, isSafeImageName, shouldArchive } from "./vaultTypes.ts";
+import { imageFileName, imageNameOf, isSafeImageName } from "./vaultTypes.ts";
 
 test("o arquivo da imagem se chama como o id da referência", () => {
   assert.equal(imageFileName("abc123"), "abc123.webp");
@@ -10,16 +10,6 @@ test("o arquivo da imagem se chama como o id da referência", () => {
   assert.equal(imageFileName("abc123", "image/svg+xml"), "abc123.svg");
   // Tipo desconhecido não inventa extensão: cai no padrão do app.
   assert.equal(imageFileName("abc123", "application/pdf"), "abc123.webp");
-});
-
-test("a cópia de resgate só é escrita quando o acervo encolhe", () => {
-  assert.equal(shouldArchive(17, 0), true, "limpeza guarda a versão anterior");
-  assert.equal(shouldArchive(17, 16), true, "exclusão guarda a versão anterior");
-  assert.equal(shouldArchive(17, 17), false, "salvar sem mudar de tamanho não mexe");
-  assert.equal(shouldArchive(17, 18), false, "acervo que cresce não mexe");
-  // O pior caso: depois de uma limpeza, cada gravação seguinte é 0 → 0. Se
-  // qualquer uma delas arquivasse, a cópia cheia seria enterrada por um vazio.
-  assert.equal(shouldArchive(0, 0), false);
 });
 
 test("aceita os nomes que o app gera", () => {

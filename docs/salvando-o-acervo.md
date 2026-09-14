@@ -10,8 +10,8 @@ cada alteração é gravada na hora:
 
 ```
 A pasta que você escolher/
-├─ acervo.json            boards, referências, tags, anotações e preferências
-├─ acervo-anterior.json   a última versão maior, pra quando algo for apagado sem querer
+├─ acervo.json            o acervo agora — reescrito a cada alteração
+├─ acervo-anterior.json   o ponto de retorno — só muda quando você salva a cópia
 └─ imagens/<id>.webp      uma imagem por referência
 ```
 
@@ -91,11 +91,11 @@ cima dele:
 - **Imagem se grava uma vez.** O nome do arquivo é o id da referência, então o
   que já está na pasta não sobe de novo — e o que nenhuma referência aponta mais
   é apagado, a não ser que a cópia anterior ainda aponte.
-- **O acervo nunca encolhe sem deixar cópia.** Quando a gravação tem menos
-  referências que o arquivo em disco, o arquivo vira `acervo-anterior.json`
-  antes de ser trocado. Só encolhendo: depois de uma limpeza, as gravações
-  seguintes são 0 → 0 e não mexem na cópia, senão o vazio enterraria a última
-  versão cheia em segundos.
+- **A cópia é sua, não do app.** Nenhuma gravação automática escreve em
+  `acervo-anterior.json`: só o botão de salvar cópia. A única exceção é a
+  primeira, criada junto com a pasta — criar o que não existe não é
+  sobrescrever, e ficar sem ponto de retorno até alguém lembrar do botão seria
+  pior.
 - **Na abertura, vence o mais recente.** Se a pasta tem uma versão mais nova de
   uma referência, ela entra; se este navegador tem, ele fica. Trazer de volta
   nunca desfaz uma edição recente.
@@ -118,28 +118,31 @@ sendo a cópia portátil, num arquivo só.
 
 ---
 
-## Desfazendo um estrago
+## O ponto de retorno
 
-`acervo-anterior.json` é a resposta pra "apaguei sem querer". Ele guarda a
-última versão do acervo que era **maior** que a atual, com as imagens dela
-intactas:
+Os dois arquivos têm papéis opostos, e é isso que faz a coisa funcionar:
 
-| O que você fez | O que a pasta guarda |
-| --- | --- |
-| Apagou uma referência | Tudo que havia antes dela sumir |
-| Apagou dez de uma vez | Tudo que havia antes |
-| **Limpar acervo** | O acervo inteiro, como estava |
-| Salvou algo novo depois | A cópia continua intacta — só encolher arquiva |
+| Arquivo | Quem escreve | Quando muda |
+| --- | --- | --- |
+| `acervo.json` | o app | a cada alteração, um segundo depois |
+| `acervo-anterior.json` | **você** | só quando aperta salvar a cópia |
 
-Pra voltar: **Ajustes → Salvo em disco → Restaurar** no app completo, ou o
-rodapé da barra lateral → **Cópia anterior na pasta → Restaurar** na página
-publicada. A restauração soma ao que existe hoje, então o que você criou depois
-do estrago não se perde. O arquivo também pode ser importado à mão, como
-qualquer acervo.
+`acervo.json` é o espelho: se você apagar tudo, ele fica vazio em um segundo —
+é a definição de tempo real. `acervo-anterior.json` é o ponto que você
+escolheu, congelado até escolher outro. As imagens que ele cita não são
+apagadas da pasta, mesmo que nenhuma referência de agora aponte pra elas.
 
-Uma limpeza seguida de outra limpeza, porém, não tem duas voltas: a cópia é uma
-só, a última. Pra histórico de verdade, ponha a pasta dentro do Google Drive,
-do OneDrive ou do Dropbox — eles guardam versões de cada arquivo por 30 dias.
+**Salvar a cópia:** Ajustes → *Salvo em disco* → **Salvar cópia agora** no app
+completo; rodapé da barra lateral → *Ponto de retorno* → **Salvar cópia agora**
+na página publicada. Vale fazer antes de qualquer faxina grande.
+
+**Restaurar:** o mesmo lugar, botão ao lado. A restauração **soma** ao acervo
+de agora, não substitui: o que você criou depois da cópia continua aí. O
+arquivo também pode ser importado à mão, como qualquer acervo.
+
+A cópia é uma só — salvar outra substitui a anterior. Pra histórico de verdade,
+ponha a pasta dentro do Google Drive, do OneDrive ou do Dropbox: eles guardam
+versões de cada arquivo por 30 dias.
 
 ---
 
@@ -154,7 +157,7 @@ dois formatos são aceitos e o app descobre qual é qual.
 | --- | --- |
 | A pasta inteira | Tudo, imagens inclusive, e o salvamento religa |
 | `acervo.json` sozinho | Links, paletas, notas, boards, tags e anotações |
-| `acervo-anterior.json` | O mesmo, na versão anterior ao último encolhimento |
+| `acervo-anterior.json` | O mesmo, na versão da última cópia que você salvou |
 | `acervo.json` + a pasta conectada | Tudo — as capas são lidas da pasta |
 | O backup exportado (`.json`) | Tudo, com as imagens embutidas no arquivo |
 

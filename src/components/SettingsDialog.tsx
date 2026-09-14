@@ -147,9 +147,13 @@ export function SettingsDialog({
         <section>
           <h3 className="text-[13px] font-semibold">Zona de risco</h3>
           <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-            Apaga todas as referências e boards deste navegador. Não dá pra desfazer.
-            {vault.status !== "off" && " A pasta em disco é esvaziada junto."} Com a
-            sincronização ligada, some também dos seus outros dispositivos.
+            Apaga todas as referências e boards deste navegador, e esvazia o{" "}
+            <Code>acervo.json</Code> junto quando a pasta está ligada.{" "}
+            {vault.status !== "off" &&
+              (vault.rescue
+                ? `O que sobrevive é a cópia salva em acervo-anterior.json (${vault.rescue.items} ${vault.rescue.items === 1 ? "referência" : "referências"}), que dá pra restaurar acima. `
+                : "A pasta ainda não tem cópia salva: salve uma acima antes, ou não haverá volta. ")}
+            Com a sincronização ligada, some também dos seus outros dispositivos.
           </p>
           <div className="mt-3">
             <Button

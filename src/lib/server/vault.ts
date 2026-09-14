@@ -10,7 +10,6 @@ import {
   VAULT_RESCUE,
   imageNameOf,
   isSafeImageName,
-  shouldArchive,
   type VaultItem,
   type VaultSnapshot,
 } from "../vaultTypes";
@@ -116,34 +115,23 @@ async function readSnapshotOrNull(name: string): Promise<VaultSnapshot | null> {
 }
 
 /**
- * Grava o acervo — e, quando ele encolheu, guarda antes a versão que estava em
- * disco como cópia de resgate.
+ * Grava o acervo em `acervo.json` — o espelho em tempo real.
  *
- * Só encolhendo: gravar um acervo vazio dez vezes seguidas não pode enterrar a
- * última versão cheia. É o que faz um "Limpar acervo" sem querer, ou uma
- * exclusão em massa, continuar tendo volta — a pasta é a rede de segurança do
- * navegador, e uma rede que se esvazia junto não é rede nenhuma.
+ * `acervo-anterior.json` só é escrito quando `checkpoint` pede: é o ponto de
+ * retorno que a pessoa escolheu, e nada automático encosta nele. A exceção é a
+ * primeira cópia, criada sozinha quando o arquivo ainda não existe — criar o
+ * que não existe não é sobrescrever, e ficar sem ponto de retorno até alguém
+ * lembrar do botão seria pior.
  *
  * Cada arquivo vai primeiro num temporário e só então substitui o antigo: um
  * app morto no meio da gravação não deixa acervo.json pela metade.
  */
-export async function writeSnapshot(input: {
-  boards: Board[];
-  items: VaultItem[];
-  settings?: Partial<Settings>;
-}): Promise<{ snapshot: VaultSnapshot; rescue: VaultSnapshot | null }> {
+export async function writeSnapshot(
+  input: { boards: Board[]; items: VaultItem[]; settings?: Partial<Settings> },
+  { checkpoint = false }: { checkpoint?: boolean } = {},
+): Promise<{ snapshot: VaultSnapshot; rescue: VaultSnapshot | null }> {
   const dir = requireDir();
   await mkdir(dir, { recursive: true });
-
-  const current = await readSnapshotOrNull(VAULT_FILE);
-  let rescue: VaultSnapshot | null;
-
-  if (current && shouldArchive(current.items.length, input.items.length)) {
-    await writeJson(join(dir, VAULT_RESCUE), current);
-    rescue = current;
-  } else {
-    rescue = await readSnapshotOrNull(VAULT_RESCUE);
-  }
 
   const snapshot: VaultSnapshot = {
     format: VAULT_FORMAT,
@@ -155,6 +143,12 @@ export async function writeSnapshot(input: {
   };
 
   await writeJson(join(dir, VAULT_FILE), snapshot);
+
+  let rescue = await readSnapshotOrNull(VAULT_RESCUE);
+  if (checkpoint || (!rescue && input.items.length > 0)) {
+    await writeJson(join(dir, VAULT_RESCUE), snapshot);
+    rescue = snapshot;
+  }
 
   return { snapshot, rescue };
 }

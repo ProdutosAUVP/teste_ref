@@ -80,6 +80,8 @@ export async function PUT(request: Request) {
       boards?: Board[];
       items?: VaultItem[];
       settings?: Partial<Settings>;
+      /** Salvar também o ponto de retorno — só o botão pede isso. */
+      checkpoint?: boolean;
     };
 
     if (!Array.isArray(body.items) || !Array.isArray(body.boards)) {
@@ -89,11 +91,10 @@ export async function PUT(request: Request) {
       );
     }
 
-    const { snapshot, rescue } = await writeSnapshot({
-      boards: body.boards,
-      items: body.items,
-      settings: body.settings,
-    });
+    const { snapshot, rescue } = await writeSnapshot(
+      { boards: body.boards, items: body.items, settings: body.settings },
+      { checkpoint: body.checkpoint === true },
+    );
 
     const keep = body.items
       .map((item) => imageNameOf(item.image))
