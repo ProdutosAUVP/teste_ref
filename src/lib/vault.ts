@@ -2,7 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 import { STORE_SETTINGS, get, put } from "./idb";
-import { applyVault, getState, subscribeStore } from "./store";
+import { applyImportedLibrary, applyVault, getState, subscribeStore } from "./store";
+import { parseImportValue } from "./importFile";
 import { imageFileName, type VaultItem } from "./vaultTypes";
 import type { Board, Item, Settings } from "./types";
 
@@ -27,7 +28,15 @@ interface VaultPayload {
   boards?: Board[];
   items?: VaultItem[];
   images?: string[];
+  rescue?: RescueInfo | null;
   error?: string;
+}
+
+/** A cópia anterior guardada na pasta: só o tamanho, pra oferecer a volta. */
+export interface RescueInfo {
+  items: number;
+  boards: number;
+  savedAt: string;
 }
 
 export type VaultStatus =
@@ -44,9 +53,11 @@ export interface VaultState {
   dir: string | null;
   savedAt: number;
   error: string | null;
+  /** Versão anterior guardada na pasta, quando o acervo encolheu. */
+  rescue: RescueInfo | null;
 }
 
-const IDLE: VaultState = { status: "off", dir: null, savedAt: 0, error: null };
+const IDLE: VaultState = { status: "off", dir: null, savedAt: 0, error: null, rescue: null };
 
 let state: VaultState = IDLE;
 const listeners = new Set<() => void>();
@@ -112,7 +123,7 @@ export async function initVault(): Promise<void> {
   }
 
   onDisk = new Set(payload.images ?? []);
-  setState({ dir: payload.dir ?? null, status: "loading" });
+  setState({ dir: payload.dir ?? null, status: "loading", rescue: payload.rescue ?? null });
 
   try {
     const stamp = (await get<{ stamp: string }>(STORE_SETTINGS, STAMP_KEY))?.stamp ?? "";
@@ -193,6 +204,24 @@ async function fetchImage(reference: string): Promise<Blob | null> {
   }
 }
 
+/**
+ * Traz de volta a cópia anterior da pasta — o desfazer de uma limpeza ou de
+ * uma exclusão em massa. Some ao acervo atual em vez de trocá-lo: se alguma
+ * coisa foi criada depois do estrago, ela continua aí.
+ */
+export async function restoreRescue(): Promise<{ items: number; boards: number }> {
+  const response = await fetch("/api/vault/anterior");
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(detail?.error ?? "Não consegui ler a cópia anterior");
+  }
+
+  const result = await applyImportedLibrary(parseImportValue(await response.json()));
+  // A restauração é uma alteração como outra qualquer: volta pro disco sozinha.
+  scheduleVaultSave(400);
+  return result;
+}
+
 /* ──────────────────────────────── gravação ───────────────────────────────── */
 
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -253,14 +282,17 @@ export async function saveVault(): Promise<void> {
       throw new Error(detail?.error ?? `A pasta recusou a gravação (${response.status})`);
     }
 
-    const { savedAt } = (await response.json()) as { savedAt: string };
+    const { savedAt, rescue } = (await response.json()) as {
+      savedAt: string;
+      rescue?: RescueInfo | null;
+    };
     await put(STORE_SETTINGS, { stamp: savedAt }, STAMP_KEY);
     // O servidor apaga as imagens que ninguém aponta mais; o cliente acompanha
     // pra não achar que elas continuam lá.
     onDisk = referenced;
 
     failures = 0;
-    setState({ status: "ready", savedAt: Date.now(), error: null });
+    setState({ status: "ready", savedAt: Date.now(), error: null, rescue: rescue ?? null });
   } catch (error) {
     console.error("Falha ao gravar na pasta do acervo", error);
     failures += 1;

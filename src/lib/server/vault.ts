@@ -7,13 +7,16 @@ import {
   VAULT_FILE,
   VAULT_FORMAT,
   VAULT_IMAGES,
+  VAULT_RESCUE,
+  imageNameOf,
   isSafeImageName,
+  shouldArchive,
   type VaultItem,
   type VaultSnapshot,
 } from "../vaultTypes";
 import type { Board, Settings } from "../types";
 
-export { VAULT_FILE, VAULT_FORMAT, VAULT_IMAGES, isSafeImageName };
+export { VAULT_FILE, VAULT_FORMAT, VAULT_IMAGES, VAULT_RESCUE, isSafeImageName };
 export type { VaultItem, VaultSnapshot };
 
 /**
@@ -76,8 +79,8 @@ function requireDir(): string {
 
 /* ────────────────────────────── acervo.json ──────────────────────────────── */
 
-export async function readSnapshot(): Promise<VaultSnapshot | null> {
-  const file = join(requireDir(), VAULT_FILE);
+export async function readSnapshot(name: string = VAULT_FILE): Promise<VaultSnapshot | null> {
+  const file = join(requireDir(), name);
 
   let raw: string;
   try {
@@ -103,18 +106,44 @@ export async function readSnapshot(): Promise<VaultSnapshot | null> {
   };
 }
 
+/** Lê sem reclamar: arquivo que falta ou que não entendemos vira `null`. */
+async function readSnapshotOrNull(name: string): Promise<VaultSnapshot | null> {
+  try {
+    return await readSnapshot(name);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Grava num arquivo temporário e troca pelo original só no fim: um app morto
- * no meio da gravação não deixa acervo.json pela metade — ou é a versão nova
- * inteira, ou continua valendo a anterior.
+ * Grava o acervo — e, quando ele encolheu, guarda antes a versão que estava em
+ * disco como cópia de resgate.
+ *
+ * Só encolhendo: gravar um acervo vazio dez vezes seguidas não pode enterrar a
+ * última versão cheia. É o que faz um "Limpar acervo" sem querer, ou uma
+ * exclusão em massa, continuar tendo volta — a pasta é a rede de segurança do
+ * navegador, e uma rede que se esvazia junto não é rede nenhuma.
+ *
+ * Cada arquivo vai primeiro num temporário e só então substitui o antigo: um
+ * app morto no meio da gravação não deixa acervo.json pela metade.
  */
 export async function writeSnapshot(input: {
   boards: Board[];
   items: VaultItem[];
   settings?: Partial<Settings>;
-}): Promise<VaultSnapshot> {
+}): Promise<{ snapshot: VaultSnapshot; rescue: VaultSnapshot | null }> {
   const dir = requireDir();
   await mkdir(dir, { recursive: true });
+
+  const current = await readSnapshotOrNull(VAULT_FILE);
+  let rescue: VaultSnapshot | null;
+
+  if (current && shouldArchive(current.items.length, input.items.length)) {
+    await writeJson(join(dir, VAULT_RESCUE), current);
+    rescue = current;
+  } else {
+    rescue = await readSnapshotOrNull(VAULT_RESCUE);
+  }
 
   const snapshot: VaultSnapshot = {
     format: VAULT_FORMAT,
@@ -125,17 +154,20 @@ export async function writeSnapshot(input: {
     items: input.items,
   };
 
-  const file = join(dir, VAULT_FILE);
+  await writeJson(join(dir, VAULT_FILE), snapshot);
+
+  return { snapshot, rescue };
+}
+
+async function writeJson(file: string, value: unknown): Promise<void> {
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temp, JSON.stringify(snapshot, null, 2), "utf8");
+    await writeFile(temp, JSON.stringify(value, null, 2), "utf8");
     await rename(temp, file);
   } catch (error) {
     await rm(temp, { force: true });
     throw error;
   }
-
-  return snapshot;
 }
 
 /* ──────────────────────────────── imagens ────────────────────────────────── */
@@ -175,9 +207,19 @@ export async function writeImage(name: string, data: Buffer): Promise<void> {
   await writeFile(file, data);
 }
 
-/** Apaga as imagens que nenhuma referência aponta mais. */
+/**
+ * Apaga as imagens que nenhuma referência aponta mais — nem as do acervo, nem
+ * as da cópia de resgate. Restaurar sem as capas seria restaurar pela metade.
+ */
 export async function pruneImages(keep: Iterable<string>): Promise<number> {
   const wanted = new Set(keep);
+
+  const rescue = await readSnapshotOrNull(VAULT_RESCUE);
+  for (const item of rescue?.items ?? []) {
+    const name = imageNameOf(item.image);
+    if (name) wanted.add(name);
+  }
+
   const present = await listImages();
   let removed = 0;
 

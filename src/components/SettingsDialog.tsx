@@ -51,6 +51,17 @@ export function SettingsDialog({
     try {
       const result = await importBackup(file);
       onChanged();
+
+      // Arquivo válido e vazio é o caso mais perigoso: dizer "importei 0" com
+      // um ✓ verde faz parecer que deu certo. Quase sempre é o arquivo errado
+      // — ou o acervo.json depois de um "Limpar acervo".
+      if (result.items === 0 && result.boards === 0) {
+        toast("Esse arquivo está vazio — não tem nenhuma referência dentro", {
+          tone: "error",
+        });
+        return;
+      }
+
       const conta = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
       toast(
         "Importei " +

@@ -1651,6 +1651,13 @@
 
   const VAULT_KEY = "vault";
   const VAULT_FILE = "acervo.json";
+  /**
+   * A versão anterior do acervo, guardada sempre que o novo tem menos
+   * referências que o que já estava em disco. É o que faz um "Limpar acervo"
+   * sem querer — ou uma exclusão em massa — continuar tendo volta: a pasta
+   * nunca perde de vista a última versão maior que ela mesma.
+   */
+  const VAULT_RESCUE = "acervo-anterior.json";
   const VAULT_IMAGES = "imagens";
   const VAULT_FORMAT = "referencias/acervo";
 
@@ -1685,8 +1692,8 @@
 
   /* ── leitura ─────────────────────────────────────────────────────── */
 
-  async function readVaultSnapshot() {
-    const handle = await vault.dir.getFileHandle(VAULT_FILE).catch(() => null);
+  async function readVaultSnapshot(name = VAULT_FILE) {
+    const handle = await vault.dir.getFileHandle(name).catch(() => null);
     if (!handle) return null;
     const file = await handle.getFile();
     if (!file.size) return null;
@@ -1859,6 +1866,14 @@
         rows.push(Object.assign({}, rest, { image: VAULT_IMAGES + "/" + name }));
       }
 
+      // Antes de trocar o arquivo: se o acervo encolheu, o que está em disco
+      // vira cópia de resgate. Só encolhendo — assim, gravar vazio dez vezes
+      // seguidas não enterra a última versão cheia.
+      const rescue = await rotateRescue(rows.length);
+      for (const item of (rescue && rescue.items) || []) {
+        if (item && item.image) keep.add(String(item.image).split("/").pop());
+      }
+
       for (const name of onDisk) {
         if (!keep.has(name)) await imagesDir.removeEntry(name).catch(() => {});
       }
@@ -1890,6 +1905,86 @@
     } finally {
       vaultWriting = false;
       if (vaultDirty) scheduleVaultSave(vaultFailures > 0 ? vaultFailures * 5000 : 400);
+    }
+  }
+
+  /**
+   * Devolve a cópia de resgate que vale depois desta gravação: a versão que
+   * está em disco, quando o acervo encolheu, ou a que já era o resgate. As
+   * imagens que ela cita não são apagadas — restaurar sem as capas seria
+   * restaurar pela metade.
+   */
+  async function rotateRescue(novoTotal) {
+    let atual = null;
+    try { atual = await readVaultSnapshot(); } catch { return null; }
+
+    if (atual && atual.items.length > novoTotal) {
+      await writeVaultFile(vault.dir, VAULT_RESCUE, JSON.stringify(atual, null, 2));
+      return atual;
+    }
+
+    try { return await readVaultSnapshot(VAULT_RESCUE); } catch { return null; }
+  }
+
+  /**
+   * Escreve no acervo o que veio de um arquivo — do import ou da cópia de
+   * resgate. Soma ao que já existe e regrava por id, então trazer duas vezes
+   * não duplica nada.
+   */
+  async function applyImport(parsed) {
+    const boards = (parsed.boards || []).filter((b) => b && b.id && b.name);
+    const items = [];
+    let semImagem = 0;
+
+    for (const raw of parsed.items || []) {
+      if (!raw || !raw.id) continue;
+      const { imageData, image, ...rest } = raw;
+
+      let imageBlob;
+      if (imageData) {
+        imageBlob = await (await fetch(imageData)).blob();
+      } else if (image) {
+        // As imagens do acervo.json são arquivos ao lado dele: só dá pra
+        // alcançá-las se a pasta estiver conectada.
+        imageBlob = (vaultOn() && await readVaultImage(image)) || undefined;
+        if (!imageBlob) semImagem++;
+      }
+
+      items.push(Object.assign({}, rest, {
+        tags: Array.isArray(rest.tags) ? rest.tags : [],
+        boardIds: Array.isArray(rest.boardIds) ? rest.boardIds : [],
+        imageBlob,
+      }));
+    }
+
+    if (items.length || boards.length) {
+      await dbPutMany(S_BOARDS, boards);
+      await dbPutMany(S_ITEMS, items);
+
+      const boardMap = new Map(state.boards.map((b) => [b.id, b]));
+      boards.forEach((b) => boardMap.set(b.id, b));
+      const itemMap = new Map(state.items.map((i) => [i.id, i]));
+      items.forEach((i) => { releaseCover(i.id); itemMap.set(i.id, i); });
+
+      state.boards = [...boardMap.values()]; sortBoards();
+      state.items = [...itemMap.values()];
+      state.selection = { type: "todos" };
+      renderRail(); renderHead(); renderGrid();
+    }
+
+    return { items: items.length, boards: boards.length, semImagem };
+  }
+
+  const contar = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+
+  /** O que a cópia de resgate tem pra oferecer, pra interface poder propor. */
+  async function readRescue() {
+    if (!vaultOn()) return null;
+    try {
+      const snapshot = await readVaultSnapshot(VAULT_RESCUE);
+      return snapshot && snapshot.items.length ? snapshot : null;
+    } catch {
+      return null;
     }
   }
 
@@ -1981,6 +2076,19 @@
     }
     await writeVault();
     toast(`Salvando em ${vault.name}/ de novo`, { tone: "success" });
+  }
+
+  /** Traz de volta a cópia anterior — o desfazer de uma limpeza. */
+  async function restoreRescue() {
+    const anterior = await readRescue();
+    if (!anterior) {
+      toast("Não há cópia anterior nessa pasta", { tone: "error" });
+      return;
+    }
+    const { items, boards } = await applyImport(anterior);
+    toast("Restaurei " + contar(items, "referência", "referências")
+      + (boards ? " e " + contar(boards, "board", "boards") : "") + " da cópia anterior",
+      { tone: "success" });
   }
 
   async function forgetVault() {
@@ -2076,6 +2184,7 @@
 
   function openStorage() {
     let dismiss = null;
+    let anterior = null;
     const body = el("div", { style: "display:flex;flex-direction:column;gap:20px" });
 
     const paint = () => {
@@ -2102,6 +2211,21 @@
           }),
         ]),
       ]));
+
+      // Se a pasta tem uma versão maior guardada, essa é a informação mais
+      // importante do diálogo: alguém acabou de perder coisa.
+      if (anterior) {
+        rows.push(el("section", { class: "section" }, [
+          el("h3", { text: "Cópia anterior na pasta" }),
+          el("p", { text: `Guardada em ${VAULT_RESCUE} quando o acervo encolheu: ${contar(anterior.items.length, "referência", "referências")}`
+            + (anterior.savedAt ? `, de ${formatDate(Date.parse(anterior.savedAt))}.` : ".")
+            + " É o desfazer de uma limpeza ou de uma exclusão em massa." }),
+          el("div", { class: "row-actions" }, [
+            el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await restoreRescue(); } },
+              [svg(ICON.upload, 14), "Restaurar " + contar(anterior.items.length, "referência", "referências")]),
+          ]),
+        ]));
+      }
 
       if (vaultSupported()) {
         rows.push(el("section", { class: "section" }, [
@@ -2153,6 +2277,11 @@
     };
 
     paint();
+    void readRescue().then((snapshot) => {
+      if (!snapshot) return;
+      anterior = snapshot;
+      paint();
+    });
 
     dismiss = modal({
       title: "Onde o acervo é salvo",
@@ -3474,48 +3603,24 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
           throw new Error("Esse arquivo não é de Referências — use o backup exportado ou o acervo.json da pasta");
         }
 
-        const boards = (parsed.boards || []).filter((b) => b && b.id && b.name);
-        const items = [];
-        let semImagem = 0;
+        const { items, boards, semImagem } = await applyImport(parsed);
 
-        for (const raw of parsed.items) {
-          if (!raw || !raw.id) continue;
-          const { imageData, image, ...rest } = raw;
-
-          let imageBlob;
-          if (imageData) {
-            imageBlob = await (await fetch(imageData)).blob();
-          } else if (image) {
-            // As imagens do acervo.json são arquivos ao lado dele: só dá pra
-            // alcançá-las se a pasta estiver conectada.
-            imageBlob = (vaultOn() && await readVaultImage(image)) || undefined;
-            if (!imageBlob) semImagem++;
-          }
-
-          items.push(Object.assign({}, rest, {
-            tags: Array.isArray(rest.tags) ? rest.tags : [],
-            boardIds: Array.isArray(rest.boardIds) ? rest.boardIds : [],
-            imageBlob,
-          }));
+        // Arquivo válido e vazio é o caso mais perigoso: dizer "importei 0" com
+        // um ✓ verde faz parecer que deu certo. Quase sempre é o arquivo
+        // errado — ou o acervo.json depois de um "Limpar acervo".
+        if (!items && !boards) {
+          const anterior = await readRescue();
+          toast("Esse arquivo está vazio — não tem nenhuma referência dentro", {
+            tone: "error",
+            action: anterior
+              ? { label: `Restaurar ${anterior.items.length}`, run: () => { dismiss(); void restoreRescue(); } }
+              : null,
+          });
+          return;
         }
 
-        await dbPutMany(S_BOARDS, boards);
-        await dbPutMany(S_ITEMS, items);
-
-        const boardMap = new Map(state.boards.map((b) => [b.id, b]));
-        boards.forEach((b) => boardMap.set(b.id, b));
-        const itemMap = new Map(state.items.map((i) => [i.id, i]));
-        items.forEach((i) => { releaseCover(i.id); itemMap.set(i.id, i); });
-
-        state.boards = [...boardMap.values()]; sortBoards();
-        state.items = [...itemMap.values()];
-        state.selection = { type: "todos" };
-
-        renderRail(); renderHead(); renderGrid();
-
-        const conta = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
-        const resumo = "Importei " + conta(items.length, "referência", "referências")
-          + (boards.length ? " e " + conta(boards.length, "board", "boards") : "");
+        const resumo = "Importei " + contar(items, "referência", "referências")
+          + (boards ? " e " + contar(boards, "board", "boards") : "");
         if (semImagem) {
           // A pasta inteira traz as capas junto; o JSON sozinho, não.
           toast(`${resumo} — ${semImagem} sem a capa`, {
@@ -3578,8 +3683,8 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
         el("section", { class: "section" }, [
           el("h3", { text: "Zona de risco" }),
           el("p", { text: vaultOn()
-            ? "Apaga todas as referências e boards — e, como a pasta é um espelho do acervo, esvazia a pasta " + vault.name + "/ junto. Não dá pra desfazer."
-            : "Apaga todas as referências e boards deste navegador. Não dá pra desfazer." }),
+            ? "Apaga todas as referências e boards, e esvazia a pasta " + vault.name + "/ junto — a pasta é um espelho do acervo. A versão de agora fica guardada em " + VAULT_RESCUE + ", dentro da pasta, e dá pra restaurar por aqui."
+            : "Apaga todas as referências e boards deste navegador. Não dá pra desfazer — e, sem uma pasta configurada, não há cópia nenhuma." }),
           el("div", { class: "row-actions" }, [
             el("button", { class: "btn btn-danger", text: "Limpar acervo", onclick: async (event) => {
               if (!confirming) {
@@ -3591,7 +3696,13 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
               await Promise.all([dbClear(S_ITEMS), dbClear(S_BOARDS)]);
               state.items = []; state.boards = []; state.selection = { type: "todos" };
               dismiss(); renderRail(); renderHead(); renderGrid();
-              toast("Acervo limpo", { tone: "success" });
+              if (vaultOn()) {
+                toast(`Acervo limpo — a versão anterior ficou em ${VAULT_RESCUE}`, {
+                  action: { label: "Restaurar", run: () => { void restoreRescue(); } },
+                });
+              } else {
+                toast("Acervo limpo", { tone: "success" });
+              }
             } }),
           ]),
         ]),

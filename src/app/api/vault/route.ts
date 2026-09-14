@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  VAULT_RESCUE,
   VaultNotConfiguredError,
   listImages,
   pruneImages,
@@ -7,6 +8,7 @@ import {
   vaultDir,
   writeSnapshot,
 } from "@/lib/server/vault";
+import type { VaultSnapshot } from "@/lib/vaultTypes";
 import { imageNameOf, type VaultItem } from "@/lib/vaultTypes";
 import type { Board, Settings } from "@/lib/types";
 
@@ -32,7 +34,15 @@ export interface VaultStatePayload {
   boards?: Board[];
   items?: VaultItem[];
   images?: string[];
+  /** A cópia anterior guardada na pasta, quando existe e tem conteúdo. */
+  rescue?: RescueInfo | null;
   error?: string;
+}
+
+export interface RescueInfo {
+  items: number;
+  boards: number;
+  savedAt: string;
 }
 
 export async function GET() {
@@ -40,7 +50,11 @@ export async function GET() {
   if (!dir) return NextResponse.json({ enabled: false } satisfies VaultStatePayload);
 
   try {
-    const [snapshot, images] = await Promise.all([readSnapshot(), listImages()]);
+    const [snapshot, images, rescue] = await Promise.all([
+      readSnapshot(),
+      listImages(),
+      readSnapshot(VAULT_RESCUE).catch(() => null),
+    ]);
     return NextResponse.json({
       enabled: true,
       dir,
@@ -49,6 +63,7 @@ export async function GET() {
       boards: snapshot?.boards ?? [],
       items: snapshot?.items ?? [],
       images,
+      rescue: describeRescue(rescue),
     } satisfies VaultStatePayload);
   } catch (error) {
     console.error("[vault] leitura falhou", error);
@@ -74,7 +89,7 @@ export async function PUT(request: Request) {
       );
     }
 
-    const snapshot = await writeSnapshot({
+    const { snapshot, rescue } = await writeSnapshot({
       boards: body.boards,
       items: body.items,
       settings: body.settings,
@@ -90,6 +105,7 @@ export async function PUT(request: Request) {
       items: body.items.length,
       boards: body.boards.length,
       removedImages: removed,
+      rescue: describeRescue(rescue),
     });
   } catch (error) {
     if (error instanceof VaultNotConfiguredError) {
@@ -104,6 +120,12 @@ export async function PUT(request: Request) {
       { status: 500 },
     );
   }
+}
+
+/** Só o tamanho da cópia anterior: o conteúdo vai por /api/vault/anterior. */
+function describeRescue(rescue: VaultSnapshot | null): RescueInfo | null {
+  if (!rescue || rescue.items.length === 0) return null;
+  return { items: rescue.items.length, boards: rescue.boards.length, savedAt: rescue.savedAt };
 }
 
 function message(error: unknown): string {

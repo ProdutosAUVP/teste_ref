@@ -128,8 +128,9 @@ também pode morar numa **pasta de verdade do computador**:
 
 ```
 A pasta que você escolher/
-├─ acervo.json          boards, referências, tags, anotações e preferências
-└─ imagens/<id>.webp    uma imagem por referência
+├─ acervo.json            boards, referências, tags, anotações e preferências
+├─ acervo-anterior.json   a última versão maior, guardada quando o acervo encolhe
+└─ imagens/<id>.webp      uma imagem por referência
 ```
 
 Cada alteração é gravada nessa pasta na hora — não é um export, não tem botão
@@ -147,6 +148,13 @@ Na [página publicada](https://produtosauvp.github.io/teste_ref/), que não tem
 servidor, quem grava é o próprio navegador: no rodapé da barra lateral, **onde o
 acervo é salvo → Escolher a pasta** (Chrome, Edge e outros Chromium). O formato é
 o mesmo dos dois lados, então a mesma pasta abre nas duas versões.
+
+**Apagar tem volta.** Toda vez que o acervo encolhe — uma exclusão em massa,
+um "Limpar acervo" sem querer — a versão que estava em disco é guardada em
+`acervo-anterior.json` antes de ser trocada, com as imagens dela preservadas.
+Ajustes (ou o diálogo de salvamento, na página publicada) mostra quantas
+referências a cópia tem e restaura num clique. Gravar vazio muitas vezes
+seguidas não enterra a cópia: só uma gravação que **encolhe** arquiva.
 
 A pasta **não tem senha**: quem alcança o app alcança o acervo. Por isso ela vem
 desligada em produção — ligue com `VAULT_DIR` só onde o disco for persistente e

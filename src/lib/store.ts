@@ -15,7 +15,7 @@ import {
   removeMany,
 } from "./idb";
 import type { BackupFile, Board, Item, Settings, SortMode, ViewMode } from "./types";
-import { parseImportFile } from "./importFile";
+import { parseImportFile, type ImportItem } from "./importFile";
 import { buildSeed } from "./seed";
 import { blobToDataUrl, dataUrlToBlob, uid } from "./utils";
 
@@ -439,7 +439,17 @@ export interface ImportResult {
  * trás — melhor um acervo sem capas do que import nenhum.
  */
 export async function importBackup(file: File): Promise<ImportResult> {
-  const parsed = parseImportFile(await file.text());
+  return applyImportedLibrary(parseImportFile(await file.text()));
+}
+
+/**
+ * Escreve no acervo o que foi lido de um arquivo — do import ou da cópia
+ * anterior da pasta. Soma ao que já existe, regravando por id.
+ */
+export async function applyImportedLibrary(parsed: {
+  boards: Board[];
+  items: ImportItem[];
+}): Promise<ImportResult> {
   const boards = parsed.boards;
 
   const items: Item[] = [];
