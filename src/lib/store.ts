@@ -15,6 +15,7 @@ import {
   removeMany,
 } from "./idb";
 import type { BackupFile, Board, Item, Settings, SortMode, ViewMode } from "./types";
+import { parseImportFile } from "./importFile";
 import { buildSeed } from "./seed";
 import { blobToDataUrl, dataUrlToBlob, uid } from "./utils";
 
@@ -423,33 +424,43 @@ export async function exportBackup(): Promise<Blob> {
 export interface ImportResult {
   boards: number;
   items: number;
+  /** Imagens que o arquivo cita mas que não vieram junto. */
+  missingImages: number;
 }
 
 /**
- * Importa um backup somando ao acervo atual (não apaga nada). IDs repetidos
- * são regravados por cima, então reimportar o mesmo arquivo não duplica itens.
+ * Importa um acervo somando ao atual (não apaga nada). IDs repetidos são
+ * regravados por cima, então reimportar o mesmo arquivo não duplica itens.
+ *
+ * Aceita as duas embalagens: o backup exportado, com as imagens embutidas, e o
+ * `acervo.json` da pasta em disco, cujas imagens são arquivos vizinhos. No
+ * segundo caso as imagens são buscadas na pasta do servidor quando ela está
+ * ligada; quando não está, o resto entra e o retorno diz quantas ficaram para
+ * trás — melhor um acervo sem capas do que import nenhum.
  */
 export async function importBackup(file: File): Promise<ImportResult> {
-  const text = await file.text();
-  const parsed = JSON.parse(text) as Partial<BackupFile>;
-
-  if (parsed.format !== "referencias/backup" || !Array.isArray(parsed.items)) {
-    throw new Error("Arquivo não parece um backup de Referências");
-  }
-
-  const boards: Board[] = (parsed.boards ?? []).filter(
-    (board): board is Board => Boolean(board?.id && board?.name),
-  );
+  const parsed = parseImportFile(await file.text());
+  const boards = parsed.boards;
 
   const items: Item[] = [];
+  let missingImages = 0;
+
   for (const raw of parsed.items) {
-    if (!raw?.id) continue;
-    const { imageData, ...rest } = raw;
+    const { imageData, image, ...rest } = raw;
+    let imageBlob: Blob | undefined;
+
+    if (imageData) {
+      imageBlob = await dataUrlToBlob(imageData);
+    } else if (image) {
+      imageBlob = (await fetchVaultImage(image)) ?? undefined;
+      if (!imageBlob) missingImages += 1;
+    }
+
     items.push({
       ...(rest as Omit<Item, "imageBlob">),
       tags: Array.isArray(rest.tags) ? rest.tags : [],
       boardIds: Array.isArray(rest.boardIds) ? rest.boardIds : [],
-      imageBlob: imageData ? await dataUrlToBlob(imageData) : undefined,
+      imageBlob,
     });
   }
 
@@ -468,7 +479,24 @@ export async function importBackup(file: File): Promise<ImportResult> {
     items: Array.from(itemMap.values()),
   });
 
-  return { boards: boards.length, items: items.length };
+  return { boards: boards.length, items: items.length, missingImages };
+}
+
+/**
+ * Busca na pasta do servidor a imagem que o `acervo.json` cita. Se a pasta
+ * estiver desligada a rota responde 503 e seguimos sem a capa — o import não
+ * pode falhar inteiro por causa de uma imagem.
+ */
+async function fetchVaultImage(reference: string): Promise<Blob | null> {
+  const name = reference.split("/").pop();
+  if (!name) return null;
+  try {
+    const response = await fetch(`/api/vault/imagens/${encodeURIComponent(name)}`);
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch {
+    return null;
+  }
 }
 
 /**

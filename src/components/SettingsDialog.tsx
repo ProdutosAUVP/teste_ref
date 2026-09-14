@@ -51,9 +51,16 @@ export function SettingsDialog({
     try {
       const result = await importBackup(file);
       onChanged();
-      toast(`${result.items} referências e ${result.boards} boards importados`, {
-        tone: "success",
-      });
+      const conta = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
+      toast(
+        "Importei " +
+          conta(result.items, "referência", "referências") +
+          (result.boards > 0 ? " e " + conta(result.boards, "board", "boards") : "") +
+          (result.missingImages > 0
+            ? ` — ${conta(result.missingImages, "capa não veio junto", "capas não vieram junto")}`
+            : ""),
+        { tone: result.missingImages > 0 ? "info" : "success" },
+      );
     } catch (error) {
       toast(
         error instanceof Error ? error.message : "Arquivo de backup inválido",
@@ -97,7 +104,8 @@ export function SettingsDialog({
           <h3 className="text-[13px] font-semibold">Cópia em arquivo</h3>
           <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
             Um JSON único com tudo dentro — inclusive as imagens enviadas — pra guardar
-            onde você quiser ou levar pra outra máquina.
+            onde você quiser ou levar pra outra máquina. O import também aceita o
+            <Code>acervo.json</Code> da pasta em disco.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="primary" disabled={busy} onClick={() => void handleExport()}>
@@ -116,7 +124,7 @@ export function SettingsDialog({
             <Button disabled={busy} onClick={() => fileRef.current?.click()}>
               <span className="flex items-center gap-1.5">
                 <UploadIcon size={14} />
-                Importar backup
+                Importar arquivo
               </span>
             </Button>
           </div>
@@ -148,6 +156,12 @@ export function SettingsDialog({
         </section>
       </div>
     </Modal>
+  );
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="rounded bg-[var(--surface)] px-1 py-0.5 text-[11px]">{children}</code>
   );
 }
 

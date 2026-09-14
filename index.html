@@ -3456,23 +3456,46 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
       toast(`Backup gerado (${formatBytes(new Blob([json]).size)})`, { tone: "success" });
     }
 
+    /**
+     * Aceita as duas embalagens do mesmo acervo: o backup exportado daqui, com
+     * as imagens embutidas, e o acervo.json da pasta em disco, cujas imagens
+     * são arquivos vizinhos. Quem está recuperando o próprio acervo não
+     * deveria precisar saber qual dos dois tem na mão.
+     */
     async function doImport(file) {
       if (!file) return;
       try {
-        const parsed = JSON.parse(await file.text());
-        if (parsed.format !== "referencias/backup" || !Array.isArray(parsed.items)) {
-          throw new Error("Arquivo não parece um backup de Referências");
+        let parsed;
+        try { parsed = JSON.parse(await file.text()); }
+        catch { throw new Error("Esse arquivo não é um JSON válido"); }
+
+        const known = parsed && (parsed.format === "referencias/backup" || parsed.format === VAULT_FORMAT);
+        if (!known || !Array.isArray(parsed.items)) {
+          throw new Error("Esse arquivo não é de Referências — use o backup exportado ou o acervo.json da pasta");
         }
 
         const boards = (parsed.boards || []).filter((b) => b && b.id && b.name);
         const items = [];
+        let semImagem = 0;
+
         for (const raw of parsed.items) {
           if (!raw || !raw.id) continue;
-          const { imageData, ...rest } = raw;
+          const { imageData, image, ...rest } = raw;
+
+          let imageBlob;
+          if (imageData) {
+            imageBlob = await (await fetch(imageData)).blob();
+          } else if (image) {
+            // As imagens do acervo.json são arquivos ao lado dele: só dá pra
+            // alcançá-las se a pasta estiver conectada.
+            imageBlob = (vaultOn() && await readVaultImage(image)) || undefined;
+            if (!imageBlob) semImagem++;
+          }
+
           items.push(Object.assign({}, rest, {
             tags: Array.isArray(rest.tags) ? rest.tags : [],
             boardIds: Array.isArray(rest.boardIds) ? rest.boardIds : [],
-            imageBlob: imageData ? await (await fetch(imageData)).blob() : undefined,
+            imageBlob,
           }));
         }
 
@@ -3489,9 +3512,20 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
         state.selection = { type: "todos" };
 
         renderRail(); renderHead(); renderGrid();
-        toast(`${items.length} referências e ${boards.length} boards importados`, { tone: "success" });
+
+        const conta = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+        const resumo = "Importei " + conta(items.length, "referência", "referências")
+          + (boards.length ? " e " + conta(boards.length, "board", "boards") : "");
+        if (semImagem) {
+          // A pasta inteira traz as capas junto; o JSON sozinho, não.
+          toast(`${resumo} — ${semImagem} sem a capa`, {
+            action: { label: "Abrir a pasta", run: () => { dismiss(); void pickVault(); } },
+          });
+        } else {
+          toast(resumo, { tone: "success" });
+        }
       } catch (error) {
-        toast(error.message || "Arquivo de backup inválido", { tone: "error" });
+        toast(error.message || "Arquivo inválido", { tone: "error" });
       } finally {
         fileInput.value = "";
       }
@@ -3532,13 +3566,13 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
         el("section", { class: "section" }, [
           el("h3", { text: "Cópia em arquivo" }),
-          el("p", { text: "Um único .json com tudo dentro, pra guardar onde você quiser ou levar pra outra máquina — inclusive as imagens." }),
+          el("p", { text: "Um único .json com tudo dentro, pra guardar onde você quiser ou levar pra outra máquina — inclusive as imagens. O import também aceita o acervo.json da pasta." }),
           el("div", { class: "row-actions" }, [
             exportButton, fileInput,
             el("button", { class: "btn btn-ghost", onclick: () => fileInput.click() },
-              [svg(ICON.upload, 14), "Importar backup"]),
+              [svg(ICON.upload, 14), "Importar arquivo"]),
           ]),
-          el("p", { class: "fine", text: "O import soma ao que já existe. Reimportar o mesmo arquivo não duplica nada." }),
+          el("p", { class: "fine", text: "O import soma ao que já existe. Reimportar o mesmo arquivo não duplica nada. Pra trazer as imagens junto com o acervo.json, escolha a pasta inteira em vez do arquivo." }),
         ]),
 
         el("section", { class: "section" }, [

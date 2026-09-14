@@ -109,3 +109,22 @@ exclusão propagando de verdade, use a sincronização com conta.
 E não substitui um backup fora da máquina: a pasta protege contra perder o
 navegador, não contra perder o computador. **Ajustes → Exportar tudo** continua
 sendo a cópia portátil, num arquivo só.
+
+---
+
+## Trazendo de volta pelo import
+
+O caminho normal de recuperação é apontar a pasta — é o único que traz as
+imagens junto e volta a salvar dali em diante. Mas o `acervo.json` sozinho
+também entra por **Ajustes → Importar arquivo**, no mesmo botão do backup: os
+dois formatos são aceitos e o app descobre qual é qual.
+
+| O que você tem | O que entra |
+| --- | --- |
+| A pasta inteira | Tudo, imagens inclusive, e o salvamento religa |
+| `acervo.json` sozinho | Links, paletas, notas, boards, tags e anotações |
+| `acervo.json` + a pasta conectada | Tudo — as capas são lidas da pasta |
+| O backup exportado (`.json`) | Tudo, com as imagens embutidas no arquivo |
+
+Quando alguma capa não vem junto, o aviso diz quantas foram — elas continuam na
+pasta `imagens/`, ao lado do arquivo.
