@@ -241,7 +241,12 @@ export function scheduleVaultSave(delay = 1200): void {
   timer = setTimeout(() => void saveVault(), delay);
 }
 
-export async function saveVault(): Promise<void> {
+/** Grava também o ponto de retorno — é o que o botão de salvar cópia chama. */
+export async function saveCheckpoint(): Promise<void> {
+  await saveVault({ checkpoint: true });
+}
+
+export async function saveVault({ checkpoint = false } = {}): Promise<void> {
   if (saving || state.status === "off") return;
   if (timer) clearTimeout(timer);
 
@@ -275,7 +280,7 @@ export async function saveVault(): Promise<void> {
     const response = await fetch("/api/vault", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ boards, items: rows, settings }),
+      body: JSON.stringify({ boards, items: rows, settings, checkpoint }),
     });
     if (!response.ok) {
       const detail = (await response.json().catch(() => null)) as { error?: string } | null;

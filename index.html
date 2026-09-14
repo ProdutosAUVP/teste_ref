@@ -1652,10 +1652,12 @@
   const VAULT_KEY = "vault";
   const VAULT_FILE = "acervo.json";
   /**
-   * A versão anterior do acervo, guardada sempre que o novo tem menos
-   * referências que o que já estava em disco. É o que faz um "Limpar acervo"
-   * sem querer — ou uma exclusão em massa — continuar tendo volta: a pasta
-   * nunca perde de vista a última versão maior que ela mesma.
+   * A cópia que você salva no botão — e só ela mexe nesse arquivo.
+   *
+   * `acervo.json` acompanha o acervo em tempo real, com tudo que isso implica:
+   * uma exclusão chega nele em um segundo. Este aqui é o ponto de retorno que
+   * você escolheu, e fica congelado até você escolher outro. Nenhuma gravação
+   * automática o toca — nem uma limpeza, nem uma exclusão em massa.
    */
   const VAULT_RESCUE = "acervo-anterior.json";
   const VAULT_IMAGES = "imagens";
@@ -1671,6 +1673,8 @@
     savedAt: 0,
     error: "",
     persisted: false,
+    /** Resumo da cópia salva: { items, boards, savedAt }. */
+    rescue: null,
   };
 
   const vaultSupported = () => vault.status !== "unsupported";
@@ -1837,7 +1841,7 @@
     vaultTimer = setTimeout(() => { void writeVault(); }, delay);
   }
 
-  async function writeVault() {
+  async function writeVault({ checkpoint = false } = {}) {
     if (!vaultOn() || vaultWriting) return;
     clearTimeout(vaultTimer);
     vaultWriting = true;
@@ -1866,11 +1870,10 @@
         rows.push(Object.assign({}, rest, { image: VAULT_IMAGES + "/" + name }));
       }
 
-      // Antes de trocar o arquivo: se o acervo encolheu, o que está em disco
-      // vira cópia de resgate. Só encolhendo — assim, gravar vazio dez vezes
-      // seguidas não enterra a última versão cheia.
-      const rescue = await rotateRescue(rows.length);
-      for (const item of (rescue && rescue.items) || []) {
+      // As imagens da cópia salva ficam, mesmo que nenhuma referência de agora
+      // aponte pra elas: restaurar sem as capas seria restaurar pela metade.
+      const guardada = await readRescue();
+      for (const item of (guardada && guardada.items) || []) {
         if (item && item.image) keep.add(String(item.image).split("/").pop());
       }
 
@@ -1879,14 +1882,24 @@
       }
 
       const stamp = new Date().toISOString();
-      await writeVaultFile(vault.dir, VAULT_FILE, JSON.stringify({
+      const snapshot = {
         format: VAULT_FORMAT,
         version: 1,
         savedAt: stamp,
         settings: { view: state.view, sort: state.sort, theme: state.theme },
         boards: state.boards,
         items: rows,
-      }, null, 2));
+      };
+      await writeVaultFile(vault.dir, VAULT_FILE, JSON.stringify(snapshot, null, 2));
+
+      // A cópia manual: o mesmo conteúdo, num arquivo que nada automático
+      // encosta. Na primeira vez ela nasce sozinha — criar o que não existe
+      // não é sobrescrever, e ficar sem ponto de retorno até alguém lembrar do
+      // botão seria pior.
+      if (checkpoint || (!guardada && rows.length)) {
+        await writeVaultFile(vault.dir, VAULT_RESCUE, JSON.stringify(snapshot, null, 2));
+        vault.rescue = { items: rows.length, boards: state.boards.length, savedAt: stamp };
+      }
 
       vault.stamp = stamp;
       vault.savedAt = Date.now();
@@ -1906,24 +1919,6 @@
       vaultWriting = false;
       if (vaultDirty) scheduleVaultSave(vaultFailures > 0 ? vaultFailures * 5000 : 400);
     }
-  }
-
-  /**
-   * Devolve a cópia de resgate que vale depois desta gravação: a versão que
-   * está em disco, quando o acervo encolheu, ou a que já era o resgate. As
-   * imagens que ela cita não são apagadas — restaurar sem as capas seria
-   * restaurar pela metade.
-   */
-  async function rotateRescue(novoTotal) {
-    let atual = null;
-    try { atual = await readVaultSnapshot(); } catch { return null; }
-
-    if (atual && atual.items.length > novoTotal) {
-      await writeVaultFile(vault.dir, VAULT_RESCUE, JSON.stringify(atual, null, 2));
-      return atual;
-    }
-
-    try { return await readVaultSnapshot(VAULT_RESCUE); } catch { return null; }
   }
 
   /**
@@ -1977,12 +1972,18 @@
 
   const contar = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
 
-  /** O que a cópia de resgate tem pra oferecer, pra interface poder propor. */
+  /** A cópia salva, inteira. `null` quando não existe ou está vazia. */
   async function readRescue() {
     if (!vaultOn()) return null;
     try {
       const snapshot = await readVaultSnapshot(VAULT_RESCUE);
-      return snapshot && snapshot.items.length ? snapshot : null;
+      if (!snapshot || !snapshot.items.length) return null;
+      vault.rescue = {
+        items: snapshot.items.length,
+        boards: (snapshot.boards || []).length,
+        savedAt: snapshot.savedAt || "",
+      };
+      return snapshot;
     } catch {
       return null;
     }
@@ -2055,6 +2056,7 @@
 
     await rememberVault();
     await writeVault();
+    void readRescue();
     if (restored) { renderRail(); renderHead(); renderGrid(); }
     toast(restored
       ? `${restored} ${restored === 1 ? "referência recuperada" : "referências recuperadas"} da pasta`
@@ -2124,6 +2126,7 @@
 
     try {
       await mergeFromVault({ settings });
+      void readRescue();
       setVaultStatus("ready");
     } catch (error) {
       console.error("Falha ao ler a pasta do acervo", error);
@@ -2212,18 +2215,33 @@
         ]),
       ]));
 
-      // Se a pasta tem uma versão maior guardada, essa é a informação mais
-      // importante do diálogo: alguém acabou de perder coisa.
-      if (anterior) {
+      // O ponto de retorno: o que a pasta tem guardado e como voltar pra lá.
+      if (on) {
+        const salvarCopia = el("button", { class: anterior ? "btn btn-ghost" : "btn btn-primary",
+          onclick: async () => {
+            await writeVault({ checkpoint: true });
+            anterior = await readRescue();
+            paint();
+            toast(vault.status === "ready"
+              ? "Cópia salva em " + VAULT_RESCUE
+              : "Não consegui salvar a cópia agora", { tone: vault.status === "ready" ? "success" : "error" });
+          } }, [svg(ICON.download, 14), anterior ? "Salvar cópia agora" : "Salvar a primeira cópia"]);
+
         rows.push(el("section", { class: "section" }, [
-          el("h3", { text: "Cópia anterior na pasta" }),
-          el("p", { text: `Guardada em ${VAULT_RESCUE} quando o acervo encolheu: ${contar(anterior.items.length, "referência", "referências")}`
-            + (anterior.savedAt ? `, de ${formatDate(Date.parse(anterior.savedAt))}.` : ".")
-            + " É o desfazer de uma limpeza ou de uma exclusão em massa." }),
+          el("h3", { text: "Ponto de retorno" }),
+          el("p", { text: anterior
+            ? `${VAULT_RESCUE} guarda ${contar(anterior.items.length, "referência", "referências")}`
+              + (anterior.savedAt ? `, de ${formatDate(Date.parse(anterior.savedAt))}` : "")
+              + ". Nenhuma gravação automática mexe nesse arquivo: ele só muda quando você salva outra cópia aqui."
+            : "A pasta ainda não tem uma cópia salva. Ela é o arquivo que nada automático toca — nem uma exclusão, nem uma limpeza." }),
           el("div", { class: "row-actions" }, [
-            el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await restoreRescue(); } },
-              [svg(ICON.upload, 14), "Restaurar " + contar(anterior.items.length, "referência", "referências")]),
+            salvarCopia,
+            anterior
+              ? el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await restoreRescue(); } },
+                  [svg(ICON.upload, 14), "Restaurar " + contar(anterior.items.length, "referência", "referências")])
+              : null,
           ]),
+          el("p", { class: "fine", text: "Restaurar soma ao acervo de agora, não substitui: o que você criou depois da cópia continua aí." }),
         ]));
       }
 
@@ -2231,20 +2249,18 @@
         rows.push(el("section", { class: "section" }, [
           el("h3", { text: "Salvar numa pasta do computador" }),
           el("p", { text: on
-            ? "A pasta é regravada a cada alteração, com as imagens junto. Se o navegador esquecer o acervo, é dela que ele volta."
+            ? "O acervo.json acompanha o acervo em tempo real, com as imagens junto. Se o navegador esquecer tudo, é dele que o acervo volta."
             : "Escolha uma pasta e o acervo passa a ser gravado nela a cada alteração — boards, referências e imagens. Não é um export: você não precisa lembrar de nada, e na próxima abertura a página lê de lá." }),
-          el("pre", { class: "snippet", text: (on ? vault.name : "Referências") + "/\n├─ acervo.json\n└─ imagens/" }),
+          el("pre", { class: "snippet", text: (on ? vault.name : "Referências")
+            + "/\n├─ acervo.json            o acervo agora, a cada alteração"
+            + "\n├─ " + VAULT_RESCUE + "   a cópia que você salva no botão"
+            + "\n└─ imagens/               uma imagem por referência" }),
           el("div", { class: "row-actions" }, [
             vault.status === "permission"
               ? el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await reconnectVault(); } },
                   [svg(ICON.folder, 14), "Reconectar pasta"])
               : el("button", { class: "btn btn-primary", onclick: async () => { dismiss(); await pickVault(); } },
                   [svg(ICON.folder, 14), on ? "Trocar de pasta" : "Escolher a pasta"]),
-            on ? el("button", { class: "btn btn-ghost", text: "Salvar agora", onclick: async () => {
-              await writeVault(); paint();
-              toast(vault.status === "ready" ? "Pasta atualizada" : "Não consegui gravar agora",
-                { tone: vault.status === "ready" ? "success" : "error" });
-            } }) : null,
             on ? el("button", { class: "btn btn-ghost", text: "Parar de salvar", onclick: async () => { await forgetVault(); paint(); } }) : null,
           ]),
           el("p", { class: "fine", text: "Dica: escolha uma pasta dentro do Google Drive, OneDrive ou Dropbox e o acervo vai pra nuvem — e pro outro computador — sem mais nenhum passo." }),
@@ -3682,9 +3698,11 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
 
         el("section", { class: "section" }, [
           el("h3", { text: "Zona de risco" }),
-          el("p", { text: vaultOn()
-            ? "Apaga todas as referências e boards, e esvazia a pasta " + vault.name + "/ junto — a pasta é um espelho do acervo. A versão de agora fica guardada em " + VAULT_RESCUE + ", dentro da pasta, e dá pra restaurar por aqui."
-            : "Apaga todas as referências e boards deste navegador. Não dá pra desfazer — e, sem uma pasta configurada, não há cópia nenhuma." }),
+          el("p", { text: !vaultOn()
+            ? "Apaga todas as referências e boards deste navegador. Não dá pra desfazer — e, sem uma pasta configurada, não há cópia nenhuma."
+            : vault.rescue
+              ? "Apaga todas as referências e boards, e esvazia o acervo.json junto — ele é um espelho em tempo real. O que sobrevive é a cópia salva em " + VAULT_RESCUE + " (" + contar(vault.rescue.items, "referência", "referências") + "), que dá pra restaurar em Salvamento."
+              : "Apaga todas as referências e boards, e esvazia o acervo.json junto. A pasta ainda não tem cópia salva: salve uma em Salvamento antes, ou não haverá volta." }),
           el("div", { class: "row-actions" }, [
             el("button", { class: "btn btn-danger", text: "Limpar acervo", onclick: async (event) => {
               if (!confirming) {
@@ -3696,8 +3714,8 @@ Referência mental: calculadoras de preço de infra. Menos escolha, mais respost
               await Promise.all([dbClear(S_ITEMS), dbClear(S_BOARDS)]);
               state.items = []; state.boards = []; state.selection = { type: "todos" };
               dismiss(); renderRail(); renderHead(); renderGrid();
-              if (vaultOn()) {
-                toast(`Acervo limpo — a versão anterior ficou em ${VAULT_RESCUE}`, {
+              if (vaultOn() && vault.rescue) {
+                toast(`Acervo limpo — a cópia salva em ${VAULT_RESCUE} continua intacta`, {
                   action: { label: "Restaurar", run: () => { void restoreRescue(); } },
                 });
               } else {

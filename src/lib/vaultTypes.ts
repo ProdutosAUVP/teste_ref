@@ -13,25 +13,16 @@ import type { Board, Item, Settings } from "./types";
 
 export const VAULT_FILE = "acervo.json";
 /**
- * A versão anterior do acervo, guardada sempre que o novo tem menos
- * referências que o que já estava em disco — o desfazer de uma limpeza ou de
- * uma exclusão em massa.
+ * A cópia que o usuário salva no botão — e só ela mexe nesse arquivo.
+ *
+ * `acervo.json` acompanha o acervo em tempo real, com tudo que isso implica:
+ * uma exclusão chega nele em um segundo. Este aqui é o ponto de retorno que a
+ * pessoa escolheu, e fica congelado até ela escolher outro. Nenhuma gravação
+ * automática o toca — nem uma limpeza, nem uma exclusão em massa.
  */
 export const VAULT_RESCUE = "acervo-anterior.json";
 export const VAULT_IMAGES = "imagens";
 export const VAULT_FORMAT = "referencias/acervo";
-
-/**
- * Se a gravação que está por vir deve arquivar antes o que já está em disco.
- *
- * A regra é só "encolheu": um acervo que perdeu referências guarda a versão
- * anterior, um que cresceu ou ficou igual não mexe na cópia. É o detalhe que
- * faz a rede de segurança sobreviver ao pior caso — gravar vazio muitas vezes
- * seguidas, depois de uma limpeza, sem enterrar a última versão cheia.
- */
-export function shouldArchive(currentItems: number, nextItems: number): boolean {
-  return currentItems > nextItems;
-}
 
 /** Item como ele vai pro disco: sem o Blob, com o caminho da imagem. */
 export type VaultItem = Omit<Item, "imageBlob"> & { image?: string };

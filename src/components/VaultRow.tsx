@@ -1,6 +1,6 @@
 "use client";
 
-import { restoreRescue, saveVault, useVaultState, type VaultState } from "@/lib/vault";
+import { restoreRescue, saveCheckpoint, useVaultState, type VaultState } from "@/lib/vault";
 import { cx, formatDate, timeAgo } from "@/lib/utils";
 import { Button } from "./Modal";
 import { toast } from "./Toast";
@@ -67,31 +67,53 @@ data/
     <section>
       <h3 className="text-[13px] font-semibold">Salvo em disco</h3>
       <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-        Cada alteração é gravada em <Code>{vault.dir ?? "data"}</Code>, com as imagens
-        junto. Limpar os dados do navegador não tira nada de lá: na abertura seguinte o
-        acervo volta de disco sozinho. Copiar essa pasta é copiar o acervo inteiro.
+        <Code>acervo.json</Code> acompanha o acervo em tempo real em{" "}
+        <Code>{vault.dir ?? "data"}</Code>, com as imagens junto — limpar os dados do
+        navegador não tira nada de lá. <Code>acervo-anterior.json</Code>, ao lado, é o
+        ponto de retorno: só muda quando você salva uma cópia aqui.
       </p>
       {vault.status === "error" && vault.error && (
         <p className="mt-2 text-xs leading-relaxed text-[var(--bad,#b4342a)]">
           Última gravação falhou: {vault.error}
         </p>
       )}
-      {vault.rescue && (
-        <div className="mt-3 rounded-lg border border-amber-500/40 p-3">
-          <p className="text-xs leading-relaxed text-[var(--text-muted)]">
-            A pasta guardou a versão anterior do acervo em{" "}
-            <Code>acervo-anterior.json</Code> — {vault.rescue.items}{" "}
-            {vault.rescue.items === 1 ? "referência" : "referências"}, de{" "}
-            {formatDate(Date.parse(vault.rescue.savedAt))}. É o desfazer de uma limpeza
-            ou de uma exclusão em massa.
-          </p>
-          <div className="mt-2">
+      <div className="mt-3 rounded-lg border border-[var(--border)] p-3">
+        <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+          {vault.rescue ? (
+            <>
+              <Code>acervo-anterior.json</Code> guarda {vault.rescue.items}{" "}
+              {vault.rescue.items === 1 ? "referência" : "referências"}, de{" "}
+              {formatDate(Date.parse(vault.rescue.savedAt))}. Nenhuma gravação
+              automática mexe nesse arquivo.
+            </>
+          ) : (
+            "A pasta ainda não tem uma cópia salva — ela é o arquivo que nada automático toca."
+          )}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button
+            variant={vault.rescue ? "ghost" : "primary"}
+            onClick={async () => {
+              try {
+                await saveCheckpoint();
+                toast("Cópia salva em acervo-anterior.json", { tone: "success" });
+              } catch {
+                toast("Não consegui salvar a cópia agora", { tone: "error" });
+              }
+            }}
+          >
+            <span className="flex items-center gap-1.5">
+              <FolderIcon size={14} />
+              {vault.rescue ? "Salvar cópia agora" : "Salvar a primeira cópia"}
+            </span>
+          </Button>
+          {vault.rescue && (
             <Button
               onClick={async () => {
                 try {
                   const result = await restoreRescue();
                   toast(
-                    `Restaurei ${result.items} ${result.items === 1 ? "referência" : "referências"} da cópia anterior`,
+                    `Restaurei ${result.items} ${result.items === 1 ? "referência" : "referências"} da cópia`,
                     { tone: "success" },
                   );
                 } catch (error) {
@@ -104,26 +126,12 @@ data/
               Restaurar {vault.rescue.items}{" "}
               {vault.rescue.items === 1 ? "referência" : "referências"}
             </Button>
-          </div>
+          )}
         </div>
-      )}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button
-          onClick={async () => {
-            await saveVault();
-            toast("Pasta atualizada", { tone: "success" });
-          }}
-        >
-          <span className="flex items-center gap-1.5">
-            <FolderIcon size={14} />
-            Gravar agora
-          </span>
-        </Button>
-        {vault.savedAt > 0 && (
-          <span className="text-[11px] text-[var(--text-faint)]">
-            última gravação {timeAgo(vault.savedAt)}
-          </span>
-        )}
+        <p className="mt-2 text-[11px] text-[var(--text-faint)]">
+          Restaurar soma ao acervo de agora, não substitui.
+          {vault.savedAt > 0 && ` Última gravação do acervo.json ${timeAgo(vault.savedAt)}.`}
+        </p>
       </div>
     </section>
   );
