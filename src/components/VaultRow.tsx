@@ -1,7 +1,7 @@
 "use client";
 
-import { saveVault, useVaultState, type VaultState } from "@/lib/vault";
-import { cx, timeAgo } from "@/lib/utils";
+import { restoreRescue, saveVault, useVaultState, type VaultState } from "@/lib/vault";
+import { cx, formatDate, timeAgo } from "@/lib/utils";
 import { Button } from "./Modal";
 import { toast } from "./Toast";
 import { FolderIcon } from "./Icons";
@@ -75,6 +75,37 @@ data/
         <p className="mt-2 text-xs leading-relaxed text-[var(--bad,#b4342a)]">
           Última gravação falhou: {vault.error}
         </p>
+      )}
+      {vault.rescue && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 p-3">
+          <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+            A pasta guardou a versão anterior do acervo em{" "}
+            <Code>acervo-anterior.json</Code> — {vault.rescue.items}{" "}
+            {vault.rescue.items === 1 ? "referência" : "referências"}, de{" "}
+            {formatDate(Date.parse(vault.rescue.savedAt))}. É o desfazer de uma limpeza
+            ou de uma exclusão em massa.
+          </p>
+          <div className="mt-2">
+            <Button
+              onClick={async () => {
+                try {
+                  const result = await restoreRescue();
+                  toast(
+                    `Restaurei ${result.items} ${result.items === 1 ? "referência" : "referências"} da cópia anterior`,
+                    { tone: "success" },
+                  );
+                } catch (error) {
+                  toast(error instanceof Error ? error.message : "Não consegui restaurar", {
+                    tone: "error",
+                  });
+                }
+              }}
+            >
+              Restaurar {vault.rescue.items}{" "}
+              {vault.rescue.items === 1 ? "referência" : "referências"}
+            </Button>
+          </div>
+        </div>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button

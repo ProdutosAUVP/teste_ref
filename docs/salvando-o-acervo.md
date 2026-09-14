@@ -10,8 +10,9 @@ cada alteração é gravada na hora:
 
 ```
 A pasta que você escolher/
-├─ acervo.json          boards, referências, tags, anotações e preferências
-└─ imagens/<id>.webp    uma imagem por referência
+├─ acervo.json            boards, referências, tags, anotações e preferências
+├─ acervo-anterior.json   a última versão maior, pra quando algo for apagado sem querer
+└─ imagens/<id>.webp      uma imagem por referência
 ```
 
 Isso **não é um export**. Você não aperta nada, não escolhe um momento, não
@@ -89,7 +90,12 @@ cima dele:
   no meio não deixa o arquivo pela metade.
 - **Imagem se grava uma vez.** O nome do arquivo é o id da referência, então o
   que já está na pasta não sobe de novo — e o que nenhuma referência aponta mais
-  é apagado.
+  é apagado, a não ser que a cópia anterior ainda aponte.
+- **O acervo nunca encolhe sem deixar cópia.** Quando a gravação tem menos
+  referências que o arquivo em disco, o arquivo vira `acervo-anterior.json`
+  antes de ser trocado. Só encolhendo: depois de uma limpeza, as gravações
+  seguintes são 0 → 0 e não mexem na cópia, senão o vazio enterraria a última
+  versão cheia em segundos.
 - **Na abertura, vence o mais recente.** Se a pasta tem uma versão mais nova de
   uma referência, ela entra; se este navegador tem, ele fica. Trazer de volta
   nunca desfaz uma edição recente.
@@ -112,6 +118,31 @@ sendo a cópia portátil, num arquivo só.
 
 ---
 
+## Desfazendo um estrago
+
+`acervo-anterior.json` é a resposta pra "apaguei sem querer". Ele guarda a
+última versão do acervo que era **maior** que a atual, com as imagens dela
+intactas:
+
+| O que você fez | O que a pasta guarda |
+| --- | --- |
+| Apagou uma referência | Tudo que havia antes dela sumir |
+| Apagou dez de uma vez | Tudo que havia antes |
+| **Limpar acervo** | O acervo inteiro, como estava |
+| Salvou algo novo depois | A cópia continua intacta — só encolher arquiva |
+
+Pra voltar: **Ajustes → Salvo em disco → Restaurar** no app completo, ou o
+rodapé da barra lateral → **Cópia anterior na pasta → Restaurar** na página
+publicada. A restauração soma ao que existe hoje, então o que você criou depois
+do estrago não se perde. O arquivo também pode ser importado à mão, como
+qualquer acervo.
+
+Uma limpeza seguida de outra limpeza, porém, não tem duas voltas: a cópia é uma
+só, a última. Pra histórico de verdade, ponha a pasta dentro do Google Drive,
+do OneDrive ou do Dropbox — eles guardam versões de cada arquivo por 30 dias.
+
+---
+
 ## Trazendo de volta pelo import
 
 O caminho normal de recuperação é apontar a pasta — é o único que traz as
@@ -123,6 +154,7 @@ dois formatos são aceitos e o app descobre qual é qual.
 | --- | --- |
 | A pasta inteira | Tudo, imagens inclusive, e o salvamento religa |
 | `acervo.json` sozinho | Links, paletas, notas, boards, tags e anotações |
+| `acervo-anterior.json` | O mesmo, na versão anterior ao último encolhimento |
 | `acervo.json` + a pasta conectada | Tudo — as capas são lidas da pasta |
 | O backup exportado (`.json`) | Tudo, com as imagens embutidas no arquivo |
 

@@ -54,7 +54,11 @@ export function parseImportFile(text: string): ImportFile {
   } catch {
     throw new ImportFormatError("Esse arquivo não é um JSON válido");
   }
+  return parseImportValue(parsed);
+}
 
+/** O mesmo, pra quem já tem o JSON lido — a cópia anterior vem assim da rota. */
+export function parseImportValue(parsed: unknown): ImportFile {
   if (!parsed || typeof parsed !== "object") {
     throw new ImportFormatError("Esse arquivo não parece um acervo de Referências");
   }
